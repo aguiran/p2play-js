@@ -4,10 +4,10 @@ Modular TypeScript library to build browser-based P2P (WebRTC) multiplayer games
 
 <!-- Badges -->
 [![CI](https://github.com/aguiran/p2play-js/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/aguiran/p2play-js/actions/workflows/ci.yml)
-[![npm version](https://img.shields.io/npm/v/%40p2play-js%2Fp2p-game.svg)](https://www.npmjs.com/package/@p2play-js/p2p-game)
+[![npm version](https://img.shields.io/npm/v/@p2play-js/p2p-game.svg)](https://www.npmjs.com/package/@p2play-js/p2p-game)
 [![license: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](./LICENSE)
 [![codecov](https://codecov.io/gh/aguiran/p2play-js/graph/badge.svg)](https://codecov.io/gh/aguiran/p2play-js)
-[![bundle size](https://img.shields.io/badge/bundle--size-pending-lightgrey.svg)](#)
+[![bundle size](https://img.shields.io/bundlephobia/minzip/@p2play-js/p2p-game.svg)](https://bundlephobia.com/package/@p2play-js/p2p-game)
 
 ### Installation
 
