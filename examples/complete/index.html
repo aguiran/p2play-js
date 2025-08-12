@@ -1,0 +1,199 @@
+<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>P2P Game - Complete</title>
+    <style>
+      body { font-family: system-ui, sans-serif; margin: 0; display: grid; grid-template-columns: 280px 1fr; height: 100vh; }
+      aside { padding: 12px; background: #181818; color: #eee; overflow: auto; }
+      main { position: relative; }
+      #game { width: 100%; height: 100%; display: block; background: #0b1020; }
+      .row { margin-bottom: 8px; }
+      label { display: block; margin-bottom: 4px; font-weight: 600; }
+      input, select, button { width: 100%; padding: 6px 8px; }
+      #log { white-space: pre-wrap; font-size: 12px; background: #111; padding: 8px; height: 160px; overflow: auto; }
+      .pill { display: inline-block; padding: 2px 6px; background: #333; border-radius: 6px; margin-left: 6px; }
+    </style>
+  </head>
+  <body>
+    <aside>
+      <div class="row">
+        <label>Room</label>
+        <input id="room" value="complete-room" />
+      </div>
+      <div class="row">
+        <label>Player ID</label>
+        <input id="pid" value="P1" />
+      </div>
+      <div class="row">
+        <label>Sync Strategy</label>
+        <select id="sync">
+          <option value="delta" selected>delta</option>
+          <option value="full">full</option>
+          <option value="hybrid">hybrid</option>
+        </select>
+      </div>
+      <div class="row">
+        <label>Conflict Resolution</label>
+        <select id="conf">
+          <option value="timestamp" selected>timestamp</option>
+          <option value="authoritative">authoritative</option>
+        </select>
+      </div>
+      <div class="row">
+        <button id="start">Start</button>
+      </div>
+      <div class="row">
+        <button id="givePotion">Give potion to random peer</button>
+      </div>
+      <div class="row">
+        <div>Host: <span id="host" class="pill">-</span></div>
+      </div>
+      <div id="log"></div>
+    </aside>
+    <main>
+      <canvas id="game"></canvas>
+    </main>
+
+    <script type="module">
+      import { P2PGameLibrary, WebSocketSignaling } from "/dist/index.js";
+
+      const logEl = document.getElementById('log');
+      const log = (m) => { logEl.textContent += m + "\n"; logEl.scrollTop = logEl.scrollHeight; };
+
+      const canvas = document.getElementById('game');
+      const ctx = canvas.getContext('2d');
+      const resize = () => { canvas.width = canvas.clientWidth; canvas.height = canvas.clientHeight; };
+      window.addEventListener('resize', resize);
+      resize();
+
+      let multiplayer;
+      let id;
+      const connected = new Set();
+
+      const keys = new Set();
+      window.addEventListener('keydown', (e) => keys.add(e.code));
+      window.addEventListener('keyup', (e) => keys.delete(e.code));
+
+      function playerColor(pid) {
+        const colors = ['#66c2a5','#fc8d62','#8da0cb','#e78ac3','#a6d854','#ffd92f'];
+        const i = Math.abs([...pid].reduce((a,c)=>a+c.charCodeAt(0),0)) % colors.length;
+        return colors[i];
+      }
+
+      function draw() {
+        ctx.clearRect(0,0,canvas.width, canvas.height);
+        const st = multiplayer?.getState();
+        if (!st) return;
+        for (const p of Object.values(st.players)) {
+          if (p.id !== id && !connected.has(p.id)) continue;
+          const color = playerColor(p.id);
+          ctx.fillStyle = color;
+          ctx.beginPath();
+          ctx.arc(p.position.x % canvas.width, p.position.y % canvas.height, 12, 0, Math.PI*2);
+          ctx.fill();
+          ctx.fillStyle = '#fff';
+          ctx.font = '10px sans-serif';
+          ctx.fillText(p.id, (p.position.x % canvas.width) - 8, (p.position.y % canvas.height) - 16);
+        }
+      }
+
+      function update(dt) {
+        if (!multiplayer) return;
+        const authoritative = document.getElementById('conf').value === 'authoritative';
+        const isHost = multiplayer.getHostId && multiplayer.getHostId() === id;
+        const canMove = !authoritative || isHost;
+        const st = multiplayer.getState();
+        if (!st.players[id]) st.players[id] = { id, position: { x: 50, y: 50, z: 0 }, velocity: { x: 0, y: 0, z: 0 } };
+        const me = st.players[id];
+        const speed = 200;
+        const v = { x: 0, y: 0, z: 0 };
+        if (canMove) {
+          if (keys.has('ArrowUp') || keys.has('KeyW')) v.y -= 1;
+          if (keys.has('ArrowDown') || keys.has('KeyS')) v.y += 1;
+          if (keys.has('ArrowLeft') || keys.has('KeyA')) v.x -= 1;
+          if (keys.has('ArrowRight') || keys.has('KeyD')) v.x += 1;
+        }
+        const len = Math.hypot(v.x, v.y) || 1;
+        v.x = v.x/len * speed; v.y = v.y/len * speed;
+        me.position.x += v.x * dt;
+        me.position.y += v.y * dt;
+        // z remains 0 in this demo; kept for compatibility with 3D movement
+        me.velocity = v;
+        if (v.x || v.y) multiplayer.broadcastMove(id, { x: me.position.x, y: me.position.y, z: me.position.z ?? 0 }, v);
+      }
+
+      let last = performance.now();
+      function loop(now=performance.now()) {
+        const dt = (now - last) / 1000; last = now;
+        update(dt);
+        multiplayer?.tick(now);
+        draw();
+        requestAnimationFrame(loop);
+      }
+
+      document.getElementById('start').onclick = async () => {
+        id = document.getElementById('pid').value || 'P1';
+        const roomId = document.getElementById('room').value || 'complete-room';
+        const conf = document.getElementById('conf').value;
+        const sync = document.getElementById('sync').value;
+
+        multiplayer = new P2PGameLibrary({
+          maxPlayers: 8,
+          syncStrategy: sync,
+          conflictResolution: conf,
+          pingOverlay: { enabled: true, position: 'top-right', canvas: null },
+          signaling: new WebSocketSignaling(id, roomId, 'ws://localhost:8787'),
+          authoritativeClientId: undefined,
+          roomId,
+          debug: {
+            enabled: true,
+            onSend(info) {
+              log(`[send] ${info.type} to ${info.to} bytes=${info.payloadBytes} delivered=${info.delivered} queued=${info.queued}`);
+            }
+          }
+        });
+        await multiplayer.start();
+        connected.clear();
+        connected.add(id);
+        // announce presence so that remote peers render us even before moving
+        multiplayer.announcePresence(id, { x: 50, y: 50, z: 0 });
+        multiplayer.on('hostChange', (host) => { document.getElementById('host').textContent = host; });
+        if (conf === 'authoritative') {
+          const info = document.createElement('div');
+          info.textContent = 'Authoritative mode: only the host can move their player.';
+          log(info.textContent);
+        }
+        multiplayer.on('peerJoin', (pid) => { connected.add(pid); log(`peerJoin: ${pid}`); });
+        multiplayer.on('peerLeave', (pid) => { connected.delete(pid); log(`peerLeave: ${pid}`); });
+        multiplayer.on('inventoryUpdate', (pid, items) => {
+          const mine = pid === id ? ' (me)' : '';
+          log(`inventoryUpdate: ${pid}${mine} -> ${items.map(i=>i.id+"x"+i.quantity).join(', ')}`);
+        });
+        multiplayer.on('objectTransfer', (from, to, item) => {
+          log(`objectTransfer: ${from} -> ${to}: ${item.id} x${item.quantity}`);
+        });
+        multiplayer.on('stateSync', (state) => {
+          try { log(`stateSync: players=[${Object.keys(state.players).join(', ')}]`); } catch {}
+        });
+        multiplayer.on('stateDelta', (delta) => {
+          try { log(`stateDelta: tick=${delta.tick} changes=${delta.changes.length}`); } catch {}
+        });
+        loop();
+      };
+
+      document.getElementById('givePotion').onclick = () => {
+        if (!multiplayer) return;
+        const peers = multiplayer.getState().players;
+        const ids = Object.keys(peers).filter(pid => pid !== id);
+        if (!ids.length) { log('no peers'); return; }
+        const to = ids[Math.floor(Math.random()*ids.length)];
+        multiplayer.updateInventory(id, [{ id: 'potion', type: 'heal', quantity: 1 }]);
+        multiplayer.transferItem(id, to, { id: 'potion', type: 'heal', quantity: 1 });
+        log(`transfer potion from ${id} to ${to}`);
+      };
+    </script>
+  </body>
+  </html>
+

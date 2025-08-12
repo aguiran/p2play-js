@@ -1,0 +1,64 @@
+{
+  "name": "@p2play-js/p2p-game",
+  "version": "0.1.0",
+  "description": "Modular TypeScript library for browser-based P2P (WebRTC) multiplayer games with state sync and consistency strategies",
+  "type": "module",
+  "main": "dist/index.js",
+  "module": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "exports": {
+    ".": {
+      "import": "./dist/index.js",
+      "types": "./dist/index.d.ts"
+    }
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "clean": "rm -rf dist",
+    "serve:ws": "node examples/server/ws-server.mjs",
+    "serve:http": "node examples/server/http-server.cjs",
+    "test": "vitest run",
+    "coverage": "vitest run --coverage",
+    "prepublishOnly": "npm run clean && npm run build"
+  },
+  "keywords": [
+    "webrtc",
+    "p2p",
+    "multiplayer",
+    "browser",
+    "game",
+    "sync",
+    "typescript",
+    "datachannel",
+    "signaling",
+    "websocket",
+    "stun",
+    "turn"
+  ],
+  "author": "Aguiran",
+  "license": "MIT",
+  "sideEffects": false,
+  "devDependencies": {
+    "@vitest/coverage-v8": "^3.2.4",
+    "typescript": "^5.5.4",
+    "vitest": "^3.2.4",
+    "ws": "^8.17.1"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/aguiran/p2play-js.git"
+  },
+  "bugs": {
+    "url": "https://github.com/aguiran/p2play-js/issues"
+  },
+  "homepage": "https://github.com/aguiran/p2play-js#readme",
+  "files": [
+    "dist",
+    "README.md",
+    "LICENSE"
+  ],
+  "publishConfig": {
+    "access": "public",
+    "provenance": true
+  }
+}
