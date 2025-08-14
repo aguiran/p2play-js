@@ -153,9 +153,16 @@ Configure interpolation/extrapolation and collisions via the `movement` option p
 - smoothing: smoothing factor [0..1]. Higher reduces jitter but adds visual inertia.
 - extrapolationMs: max extrapolation window (ms). Limits how long we project a position when updates are late.
 - worldBounds: `{ width, height, depth? }` to avoid leaving the map (Z optional).
+- ignoreWorldBounds: if `true`, disables all clamping against `worldBounds` (infinite/open world). Collisions remain player-vs-player only; no boundary collisions are applied.
 - playerRadius: radius used for circle/sphere collision detection/resolution.
 
 Integration principle (per axis): `position += clamp(velocity, ±maxSpeed) * dt * smoothing`, with `dt` capped by `extrapolationMs`. Timestamps are fed on every `playerMove` to keep extrapolation consistent.
+
+Defaults and behaviors:
+
+- If you provide `movement.worldBounds`, it will be used for XY clamping and optionally Z if `depth > 0`.
+- If you omit `movement.worldBounds`, defaults are applied: `{ width: 2000, height: 2000 }` and Z is unbounded unless `depth` is provided.
+- If you set `movement.ignoreWorldBounds: true`, no coordinate clamping is applied on X/Y/Z even if `worldBounds` is present.
 
 Example:
 
@@ -167,6 +174,8 @@ const multiplayer = new P2PGameLibrary({
     smoothing: 0.25,
     extrapolationMs: 140,
     worldBounds: { width: 4000, height: 3000, depth: 500 },
+    // or disable bounds entirely for open worlds:
+    // ignoreWorldBounds: true,
     playerRadius: 20,
   },
 });
@@ -180,6 +189,25 @@ const multiplayer = new P2PGameLibrary({
 Ordering & deduplication
 - Each application message carries `seq` (per‑sender monotonic counter). Receivers ignore any `seq` ≤ last seen for that sender.
 - Last‑Writer‑Wins (LWW): the “latest author” (largest `seq` for a given sender) wins. No echoes: peers never re‑broadcast application messages.
+
+#### Authoritative mode: détails et implications
+
+- **Source d’autorité**: par défaut, si `conflictResolution: "authoritative"` est actif et que `authoritativeClientId` n’est pas fourni, l’ID de l’hôte courant devient l’autorité. Lors d’un `hostChange`, si aucune autorité n’est explicitement définie, elle bascule automatiquement vers le nouvel hôte.
+- **Application des actions**: seules les actions émanant de l’`authoritativeClientId` sont acceptées (mouvement, inventaire, transferts). Les actions des autres pairs sont ignorées par la logique interne.
+- **Expérience côté client non autoritaire**:
+  - Vos actions locales ne sont pas appliquées directement. Vous devez soit:
+    - Relayer vos intentions à l’autorité (ex. via payload/application protocol) qui appliquera la mutation et la diffusera, ou
+    - Faire de l’optimistic UI côté client, puis accepter les corrections (les deltas reçus depuis l’autorité). La lib ne fournit pas de mécanisme de reconciliation automatique; votre appli doit gérer l’UI optimiste et l’acceptation des corrections.
+  - **Latence**: la latence perçue est au minimum un aller‑retour jusqu’à l’autorité (RTT) avant de voir l’état partagé mis à jour.
+- **Host migration**:
+  - L’hôte est élu de manière déterministe (plus petit `playerId`). Sur perte d’hôte, une ré‑élection a lieu et un `hostChange` est émis.
+  - Si aucune autorité explicite n’est définie, l’autorité basculera vers le nouvel hôte automatiquement.
+  - Le nouvel hôte enverra un `state_full` pour réaligner tout le monde.
+- **Sécurité/anti‑triche**: ce mode reste « client‑autoritaire » (autorité = un client). Il n’est pas conçu pour être cheat‑proof. Pour un modèle réellement sécurisé, utilisez un serveur/hôte de confiance (headless) et définissez explicitement `authoritativeClientId`.
+- **Bonnes pratiques**:
+  - Fixer `authoritativeClientId` vers un hôte contrôlé (ex. serveur headless) pour éviter les bascules d’autorité indésirables.
+  - Standardiser un protocole d’« intents » côté client non autoritaire (ex. demandes de déplacement), validées/appliquées par l’autorité, puis répercutées via `state_delta`.
+  - Monitorer la latence (`ping` events) et adapter l’UI (prédiction visuelle locale, lissage) pour réduire l’impact perçu.
 
 ### Serialization / compression
 

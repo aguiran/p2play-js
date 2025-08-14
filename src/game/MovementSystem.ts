@@ -14,8 +14,9 @@ export class MovementSystem {
       smoothing: cfg.smoothing ?? 0.2,
       extrapolationMs: cfg.extrapolationMs ?? 120,
       worldBounds: cfg.worldBounds ?? { width: 2000, height: 2000 },
+      ignoreWorldBounds: cfg.ignoreWorldBounds ?? false,
       playerRadius: cfg.playerRadius ?? 16,
-    };
+    } as Required<MovementOptions>;
 
     // Track last network movement timestamp for consistent, bounded extrapolation
     this.bus.on("playerMove", (playerId: PlayerId) => {
@@ -54,13 +55,20 @@ export class MovementSystem {
         const nextX = player.position.x + vx * allowedDtSec * this.cfg.smoothing;
         const nextY = player.position.y + vy * allowedDtSec * this.cfg.smoothing;
         const nextZ = (player.position.z ?? 0) + vz * allowedDtSec * this.cfg.smoothing;
-        player.position.x = Math.max(0, Math.min(this.cfg.worldBounds.width, nextX));
-        player.position.y = Math.max(0, Math.min(this.cfg.worldBounds.height, nextY));
-        const depth = this.cfg.worldBounds.depth ?? 0;
-        if (depth > 0) {
-          player.position.z = Math.max(0, Math.min(depth, nextZ));
+        if (this.cfg.ignoreWorldBounds === true) {
+          // No clamping at all: open world
+          player.position.x = nextX;
+          player.position.y = nextY;
+          player.position.z = nextZ;
         } else {
-          player.position.z = nextZ; // free z if no bound set
+          player.position.x = Math.max(0, Math.min(this.cfg.worldBounds.width, nextX));
+          player.position.y = Math.max(0, Math.min(this.cfg.worldBounds.height, nextY));
+          const depth = this.cfg.worldBounds.depth ?? 0;
+          if (depth > 0) {
+            player.position.z = Math.max(0, Math.min(depth, nextZ));
+          } else {
+            player.position.z = nextZ; // free z if no bound set
+          }
         }
       }
       this.lastFrameTsByPlayer.set(player.id, now);

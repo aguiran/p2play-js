@@ -160,6 +160,8 @@ export interface MovementOptions {
   extrapolationMs?: number;
   /** World bounds to constrain positions (3D). depth is optional for back-compat */
   worldBounds?: { width: number; height: number; depth?: number };
+  /** If true, disables all clamping against world bounds (infinite/open world) */
+  ignoreWorldBounds?: boolean;
   /** Sphere radius for player-player collisions */
   playerRadius?: number;
 }

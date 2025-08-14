@@ -156,9 +156,9 @@ constructor(bus: EventBus, signaling: SignalingAdapter, serializationStrategy: S
       if (rtc.connectionState === "connected") {
         // avoid adding self
         if (info.id !== this.localId) {
-          // Elect host before emitting peerJoin to guarantee order hostChange -> peerJoin
-          this.maybeElectHost(info.id);
+          // Add peer, elect host, then emit peerJoin to guarantee order hostChange -> peerJoin
           this.peers.set(info.id, info);
+          this.electHost();
           this.bus.emit("peerJoin", info.id);
           // No global offer anymore
         }
@@ -227,7 +227,8 @@ constructor(bus: EventBus, signaling: SignalingAdapter, serializationStrategy: S
   }
 
   private maybeElectHost(newPeerId: PlayerId) {
-    if (!this.hostId) this.electHost();
+    // Always re-evaluate to ensure smallest-id host after any topology change
+    this.electHost();
   }
 
   private electHost() {

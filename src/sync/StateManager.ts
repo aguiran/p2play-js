@@ -61,20 +61,14 @@ export class StateManager {
   applyFullState(msg: FullStateMessage) {
     const incoming = msg.state;
     const localId = this.getLocalId();
-    // Merge instead of replace to avoid resetting local player's state
-    // Players: add missing only (avoid resetting existing views)
+    // Merge with overwrite for remote players to realign diverged states (keep local player's live state)
     for (const [pid, pstate] of Object.entries(incoming.players)) {
       if (pid === localId) continue;
-      if (!this.state.players[pid]) {
-        this.state.players[pid] = structuredClone(pstate);
-      }
+      this.state.players[pid] = structuredClone(pstate);
     }
-    // Inventories: add missing only
     for (const [pid, items] of Object.entries(incoming.inventories)) {
       if (pid === localId) continue;
-      if (!this.state.inventories[pid]) {
-        this.state.inventories[pid] = items.map((it) => ({ ...it }));
-      }
+      this.state.inventories[pid] = items.map((it) => ({ ...it }));
     }
     // If this is an initial join/rejoin (no seq seen for local), accept host snapshot for localId too
     if (localId && this.lastAppliedSeq.get(localId) === undefined) {
