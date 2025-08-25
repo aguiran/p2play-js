@@ -11,11 +11,9 @@ describe('ConflictResolver.applyDelta & edge cases', () => {
     const r = new ConflictResolver('timestamp', () => undefined, () => []);
     const st = baseState();
     r.applyDelta(st, { tick: 3, changes: [{ path: 'objects.foo.bar', value: 42 }] });
-    // @ts-expect-error test-only deep path
     expect((st.objects as any).foo.bar).toBe(42);
     expect(st.tick).toBe(3);
     r.applyDelta(st, { tick: 1, changes: [{ path: 'objects.foo.baz', value: 7 }] });
-    // @ts-expect-error test-only deep path
     expect((st.objects as any).foo.baz).toBe(7);
     // tick stays at max
     expect(st.tick).toBe(3);
