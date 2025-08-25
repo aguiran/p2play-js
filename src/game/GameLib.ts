@@ -45,7 +45,8 @@ export class P2PGameLibrary {
       options.serialization ?? "json",
       options.iceServers,
       options.debug,
-      options.backpressure
+      options.backpressure,
+      this.options.maxPlayers
     );
     this.localId = options.signaling.localId;
 

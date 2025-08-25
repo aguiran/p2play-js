@@ -2,6 +2,10 @@
 
 Modular TypeScript library to build browser-based P2P (WebRTC) multiplayer games, with state synchronization and consistency strategies.
 
+### Visual Example / Demo
+
+[![Demo](https://raw.githubusercontent.com/aguiran/p2play-js/refs/heads/main/examples/demo-p2play-js.gif)](https://github.com/aguiran/p2play-js/tree/main/examples)
+
 <!-- Badges -->
 [![CI](https://github.com/aguiran/p2play-js/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/aguiran/p2play-js/actions/workflows/ci.yml)
 [![npm version](https://img.shields.io/npm/v/@p2play-js/p2p-game.svg)](https://www.npmjs.com/package/@p2play-js/p2p-game)
@@ -92,7 +96,7 @@ multiplayer.setStateAndBroadcast("playerA", [
 
 - WebRTC DataChannels (P2P) synchronization + WebSocket signaling (rooms)
 - Global shared state: players, inventories, objects, tick
-- Sync strategies: `full`, `delta` (practically “hybrid” using both)
+- Sync strategies: `full`, `delta`. The library accepts both message types; your app decides when to send full snapshots vs delta updates. The `syncStrategy` option is advisory and does not automatically switch internal behavior.
 - Consistency strategies: `timestamp`, `authoritative`
 - Event handling: movement, inventories, transfers, shared payloads
 - Ping overlay: per-peer latency, simple chart
@@ -234,7 +238,54 @@ Use `WebSocketSignaling(localId, roomId, serverUrl)` to relay offers/answers/ICE
 
 ### Examples
 
-- Complete: `examples/complete/index.html`
+#### Basic WebSocket Test: `examples/basic/index.html`
+
+A standalone WebSocket testing tool to verify connectivity with your signaling server before implementing full P2P logic.
+
+**Purpose**:
+- **Connectivity testing**: Validates that your WebSocket signaling server is accessible and working correctly
+- **Network debugging**: Diagnoses connection issues (firewall, proxy, TLS certificates)
+- **Protocol understanding**: Visualizes signaling message exchanges (roster, routing)
+- **STUN/TURN configuration**: Tests different servers before P2P integration
+
+**Features**:
+- WebSocket connection with detailed error handling and timeout
+- Automatic support for ws:// and wss:// schemes
+- Interface to join rooms and announce presence
+- Send arbitrary JSON messages or simple text
+- WebSocket error code display with explanations
+- Detailed exchange logging (timestamp, direction, content)
+
+**Usage**:
+1. Open `examples/basic/index.html` in your browser
+2. Configure your server URL (default: `wss://wss.getlost.ovh`)
+3. Click "Connect" to establish the WebSocket connection
+4. Enter a Room ID and Player ID, then click "Join Room"
+5. Send messages to test communication
+
+**Public test server**:
+- URL: `wss://wss.getlost.ovh`
+- Status: Free signaling server for testing purposes only
+- **Limitations**: No authentication, no persistence, best-effort service
+- **Security**: Do not send sensitive data, TLS transport encryption only
+
+#### Complete Demo: `examples/complete/index.html`
+
+Comprehensive P2P multiplayer game demonstrating the library's core capabilities:
+
+**Architecture showcase:**
+- **State management**: Comparison of sync strategies (delta vs full)
+- **Conflict resolution**: Choose between timestamp and authoritative modes (select before clicking Start)
+- **Network topology**: Full-mesh P2P with deterministic host election
+- **Movement system**: Interpolation, extrapolation, and collision detection in action
+
+**Advanced features:**
+- **Resilience**: Automatic host migration when players disconnect
+- **Performance**: State delta updates and basic backpressure handling
+- **Debugging**: Real-time event logging and network diagnostics
+- **Scalability**: Multi-player synchronization; configurable player limits
+
+See the "Local dev servers" section below for setup and usage instructions. In the demo UI, pick the strategy and mode, then click Start.
 
 ### Events
 
@@ -250,11 +301,14 @@ Use `WebSocketSignaling(localId, roomId, serverUrl)` to relay offers/answers/ICE
 | peerLeave        | (playerId)                                         | Peer disconnected        |
 | hostChange       | (hostId)                                           | New host                 |
 | ping             | (playerId, ms)                                     | RTT to peer              |
+| maxCapacityReached | (maxPlayers)                                     | Capacity reached; new connections refused |
 
 ### Lifecycle & presence
 
 - Presence: `announcePresence(playerId)` is recommended to emit an initial move so peers render the player immediately.
-- `peerJoin`/`peerLeave`: the UI can show/hide entities; host‑side state cleanup (removing a player from structures) is left to your logic (send a cleanup delta).
+- `peerJoin`/`peerLeave`: the UI can show/hide entities. Host‑side cleanup can be automated by enabling `cleanupOnPeerLeave: true` in `P2PGameLibrary` options: the host removes the leaving player's entries and broadcasts a delta accordingly.
+- `peerJoin`/`peerLeave`: the UI can show/hide entities. Host‑side cleanup can be automated by enabling `cleanupOnPeerLeave: true` in `P2PGameLibrary` options: the host removes the leaving player's entries and broadcasts a delta accordingly.
+- Capacity limit: set `maxPlayers` to cap the room size. When capacity is reached, the library will not initiate new connections and will ignore incoming offers; it emits `maxCapacityReached(maxPlayers)` so you can inform the user/UI.
 
 ### Performance & best practices
 
