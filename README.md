@@ -2,10 +2,6 @@
 
 Modular TypeScript library to build browser-based P2P (WebRTC) multiplayer games, with state synchronization and consistency strategies.
 
-### Visual Example / Demo
-
-[![Demo](https://raw.githubusercontent.com/aguiran/p2play-js/refs/heads/main/examples/demo-p2play-js.gif)](https://github.com/aguiran/p2play-js/tree/main/examples)
-
 <!-- Badges -->
 [![CI](https://github.com/aguiran/p2play-js/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/aguiran/p2play-js/actions/workflows/ci.yml)
 [![npm version](https://img.shields.io/npm/v/@p2play-js/p2p-game.svg)](https://www.npmjs.com/package/@p2play-js/p2p-game)
