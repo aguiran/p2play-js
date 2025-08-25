@@ -194,24 +194,24 @@ Ordering & deduplication
 - Each application message carries `seq` (per‑sender monotonic counter). Receivers ignore any `seq` ≤ last seen for that sender.
 - Last‑Writer‑Wins (LWW): the “latest author” (largest `seq` for a given sender) wins. No echoes: peers never re‑broadcast application messages.
 
-#### Authoritative mode: détails et implications
+#### Authoritative mode: details and implications
 
-- **Source d’autorité**: par défaut, si `conflictResolution: "authoritative"` est actif et que `authoritativeClientId` n’est pas fourni, l’ID de l’hôte courant devient l’autorité. Lors d’un `hostChange`, si aucune autorité n’est explicitement définie, elle bascule automatiquement vers le nouvel hôte.
-- **Application des actions**: seules les actions émanant de l’`authoritativeClientId` sont acceptées (mouvement, inventaire, transferts). Les actions des autres pairs sont ignorées par la logique interne.
-- **Expérience côté client non autoritaire**:
-  - Vos actions locales ne sont pas appliquées directement. Vous devez soit:
-    - Relayer vos intentions à l’autorité (ex. via payload/application protocol) qui appliquera la mutation et la diffusera, ou
-    - Faire de l’optimistic UI côté client, puis accepter les corrections (les deltas reçus depuis l’autorité). La lib ne fournit pas de mécanisme de reconciliation automatique; votre appli doit gérer l’UI optimiste et l’acceptation des corrections.
-  - **Latence**: la latence perçue est au minimum un aller‑retour jusqu’à l’autorité (RTT) avant de voir l’état partagé mis à jour.
+- **Authority source**: by default, if `conflictResolution: "authoritative"` is active and `authoritativeClientId` is not provided, the current host ID becomes the authority. During a `hostChange`, if no authority is explicitly defined, it automatically switches to the new host.
+- **Action application**: only actions coming from the `authoritativeClientId` are accepted (movement, inventory, transfers). Other peers’ actions are ignored by internal logic.
+- **Non‑authoritative client experience**:
+  - Local actions are not applied directly. You must either:
+    - Relay intents to the authority (e.g., via payload/application protocol) which applies the mutation and broadcasts it, or
+    - Implement optimistic UI and accept corrections (authority deltas). The library doesn’t provide automatic reconciliation; your app must handle optimism and corrections.
+  - **Latency**: perceived latency is at least one round trip to the authority (RTT) before shared state updates are visible.
 - **Host migration**:
-  - L’hôte est élu de manière déterministe (plus petit `playerId`). Sur perte d’hôte, une ré‑élection a lieu et un `hostChange` est émis.
-  - Si aucune autorité explicite n’est définie, l’autorité basculera vers le nouvel hôte automatiquement.
-  - Le nouvel hôte enverra un `state_full` pour réaligner tout le monde.
-- **Sécurité/anti‑triche**: ce mode reste « client‑autoritaire » (autorité = un client). Il n’est pas conçu pour être cheat‑proof. Pour un modèle réellement sécurisé, utilisez un serveur/hôte de confiance (headless) et définissez explicitement `authoritativeClientId`.
-- **Bonnes pratiques**:
-  - Fixer `authoritativeClientId` vers un hôte contrôlé (ex. serveur headless) pour éviter les bascules d’autorité indésirables.
-  - Standardiser un protocole d’« intents » côté client non autoritaire (ex. demandes de déplacement), validées/appliquées par l’autorité, puis répercutées via `state_delta`.
-  - Monitorer la latence (`ping` events) et adapter l’UI (prédiction visuelle locale, lissage) pour réduire l’impact perçu.
+  - The host is elected deterministically (smallest `playerId`). On host loss, re‑election occurs and a `hostChange` is emitted.
+  - If no explicit authority is set, authority automatically switches to the new host.
+  - The new host sends a `state_full` to realign everyone.
+- **Security/anti‑cheat**: this remains a “client‑authoritative” model (authority = a client). It isn’t cheat‑proof. For a secure model, use a trusted/headless host and set `authoritativeClientId` explicitly.
+- **Best practices**:
+  - Pin `authoritativeClientId` to a controlled host (e.g., headless server) to avoid undesirable authority switches.
+  - Standardize an intents protocol for non‑authoritative clients (e.g., movement requests), validated/applied by the authority, then propagated via `state_delta`.
+  - Monitor latency (`ping` events) and adapt the UI (local prediction, smoothing) to reduce perceived impact.
 
 ### Serialization / compression
 
