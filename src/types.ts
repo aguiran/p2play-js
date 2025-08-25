@@ -1,13 +1,12 @@
 export type SyncStrategy = "full" | "delta" | "hybrid";
 export type ConflictResolution = "timestamp" | "authoritative";
-export type SerializationStrategy = "json" | "json+gzip" | "binary-min";
+export type SerializationStrategy = "json" | "binary-min";
 
 export interface GameLibOptions {
   maxPlayers?: number;
   syncStrategy?: SyncStrategy;
   conflictResolution?: ConflictResolution;
   authoritativeClientId?: string;
-  roomId?: string;
   serialization?: SerializationStrategy;
   iceServers?: RTCIceServer[]; // STUN/TURN configuration
   cleanupOnPeerLeave?: boolean; // if true and we are host: remove leaving player and broadcast state
@@ -146,6 +145,7 @@ export type EventHandlerMap = {
   sharedPayload: (from: PlayerId, payload: unknown, channel?: string) => void;
   netMessage: (msg: NetMessage) => void;
   hostChange: (hostId: PlayerId) => void;
+  maxCapacityReached: (maxPlayers: number) => void;
 };
 
 export type EventName = keyof EventHandlerMap;
@@ -160,6 +160,8 @@ export interface MovementOptions {
   extrapolationMs?: number;
   /** World bounds to constrain positions (3D). depth is optional for back-compat */
   worldBounds?: { width: number; height: number; depth?: number };
+  /** If true, disables all clamping against world bounds (infinite/open world) */
+  ignoreWorldBounds?: boolean;
   /** Sphere radius for player-player collisions */
   playerRadius?: number;
 }

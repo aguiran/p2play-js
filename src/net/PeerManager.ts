@@ -37,8 +37,9 @@ export class PeerManager {
   private debug: DebugOptions = {};
   private serializationStrategy: SerializationStrategy = "json";
   private backpressure: Required<BackpressureOptions> = { strategy: "coalesce-moves", thresholdBytes: 262144 } as any;
+  private maxPlayers?: number;
 
-constructor(bus: EventBus, signaling: SignalingAdapter, serializationStrategy: SerializationStrategy = "json", iceServers?: RTCIceServer[], debug?: DebugOptions, backpressure?: BackpressureOptions) {
+constructor(bus: EventBus, signaling: SignalingAdapter, serializationStrategy: SerializationStrategy = "json", iceServers?: RTCIceServer[], debug?: DebugOptions, backpressure?: BackpressureOptions, maxPlayers?: number) {
     this.bus = bus;
     this.signaling = signaling;
     this.localId = signaling.localId;
@@ -47,6 +48,7 @@ constructor(bus: EventBus, signaling: SignalingAdapter, serializationStrategy: S
   this.debug = debug ?? {};
   this.serializationStrategy = serializationStrategy;
   if (backpressure) this.backpressure = { strategy: backpressure.strategy ?? "coalesce-moves", thresholdBytes: backpressure.thresholdBytes ?? 262144 };
+  this.maxPlayers = maxPlayers;
   }
 
   getPeerIds(): PlayerId[] {
@@ -77,6 +79,11 @@ constructor(bus: EventBus, signaling: SignalingAdapter, serializationStrategy: S
         const existing = this.peers.get(pid);
         const isActive = !!(existing && existing.dc && existing.dc.readyState === "open" && existing.rtc.connectionState === "connected");
         if (isActive) continue;
+        // Capacity check: do not initiate beyond max remote peers allowed
+        if (this.getInUseRemoteSlots() >= this.getMaxRemotePeers()) {
+          if (this.maxPlayers) this.bus.emit("maxCapacityReached", this.maxPlayers);
+          continue;
+        }
         // Deterministic initiation: only smaller id initiates towards bigger id
         if (this.localId < pid) {
           this.createOfferTo(pid).catch(() => {});
@@ -100,6 +107,11 @@ constructor(bus: EventBus, signaling: SignalingAdapter, serializationStrategy: S
         await info.rtc.setRemoteDescription(desc);
         this.flushBufferedIce(from, info);
       } else if (desc.type === "offer") {
+        // Capacity check: ignore offers if at capacity
+        if (this.getInUseRemoteSlots() >= this.getMaxRemotePeers()) {
+          if (this.maxPlayers) this.bus.emit("maxCapacityReached", this.maxPlayers);
+          return;
+        }
         if (info?.rtc.connectionState === "connected" || info?.rtc.connectionState === "connecting") return;
         if (!info) {
           info = await this.createPeer(from, false);
@@ -156,9 +168,9 @@ constructor(bus: EventBus, signaling: SignalingAdapter, serializationStrategy: S
       if (rtc.connectionState === "connected") {
         // avoid adding self
         if (info.id !== this.localId) {
-          // Elect host before emitting peerJoin to guarantee order hostChange -> peerJoin
-          this.maybeElectHost(info.id);
+          // Add peer, elect host, then emit peerJoin to guarantee order hostChange -> peerJoin
           this.peers.set(info.id, info);
+          this.electHost();
           this.bus.emit("peerJoin", info.id);
           // No global offer anymore
         }
@@ -227,7 +239,8 @@ constructor(bus: EventBus, signaling: SignalingAdapter, serializationStrategy: S
   }
 
   private maybeElectHost(newPeerId: PlayerId) {
-    if (!this.hostId) this.electHost();
+    // Always re-evaluate to ensure smallest-id host after any topology change
+    this.electHost();
   }
 
   private electHost() {
@@ -357,6 +370,16 @@ constructor(bus: EventBus, signaling: SignalingAdapter, serializationStrategy: S
         if (peer.dc?.readyState === "open") peer.dc.send(ping);
       }
     }, 2000);
+  }
+
+  private getMaxRemotePeers(): number {
+    if (!this.maxPlayers) return Number.POSITIVE_INFINITY;
+    return Math.max(0, this.maxPlayers - 1);
+  }
+
+  private getInUseRemoteSlots(): number {
+    // Count connected peers plus pending initiators to avoid overshooting capacity
+    return this.peers.size + this.pendingInitiators.size;
   }
 }
 

@@ -1,0 +1,259 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>WebSocket Test - wss.getlost.ovh</title>
+    <meta charset="UTF-8">
+    <style>
+        body { font-family: monospace; padding: 20px; }
+        #messages { border: 1px solid #ccc; height: 300px; overflow-y: auto; padding: 10px; margin: 10px 0; }
+        input, button { padding: 8px; margin: 5px; }
+        .connected { color: green; }
+        .error { color: red; }
+        .message { margin: 2px 0; }
+    </style>
+</head>
+<body>
+    <h1>WebSocket Test - wss.getlost.ovh</h1>
+    <p>
+        This page connects to a public, free <strong>signaling</strong> WebSocket server at <code>wss://wss.getlost.ovh</code>.
+        It is provided strictly for testing. There is <strong>no authentication</strong> and no persistence: it is a thin
+        relay used to exchange WebRTC descriptors (SDP/ICE) and to maintain a per‑room roster of peers.
+    </p>
+    <p>
+        The server code is in <code>examples/server/ws-server.mjs</code>. Here is exactly what it does:
+    </p>
+    <ul>
+        <li><strong>Connection and rooms</strong>: upon receiving the first JSON message with a <code>roomId</code>,
+            the socket is attached to that room (created if missing). For each room the server tracks the set of sockets
+            and a <em>roster</em> (list of player identifiers).</li>
+        <li><strong>Presence announcement</strong>: if a message contains <code>announce: true</code> and a <code>from</code>
+            (your Player ID), that ID is stored for the connection and added to the room roster. The server then broadcasts
+            to everyone in the room a roster update of the form <code>{ sys: 'roster', roomId, roster: [...] }</code>.</li>
+        <li><strong>Message routing</strong>:
+            <ul>
+                <li>If a <code>to</code> field is present, the JSON payload is relayed as‑is to the targeted recipient
+                    (same room, <code>playerId === to</code>).</li>
+                <li>Otherwise the message is broadcast to <strong>all other</strong> clients in the room (excluding the sender).</li>
+            </ul>
+        </li>
+        <li><strong>Stateless</strong>: the server keeps no message history. Newly connected clients do not receive past messages.</li>
+        <li><strong>Disconnect</strong>: when a socket closes it is removed from the room; if a <code>playerId</code> had been
+            announced it is removed from the roster. Empty rooms are deleted; otherwise a fresh <code>sys: 'roster'</code> is broadcast.</li>
+        <li><strong>Security and limits</strong>:
+            <ul>
+                <li>No authentication: anyone who knows a <code>roomId</code> can join that room.</li>
+                <li>No schema validation or sanitization: the server simply relays JSON. <strong>Do not send secrets</strong>.</li>
+                <li>Transport is WSS (TLS) but there is no end‑to‑end encryption: the server sees the JSON it relays.</li>
+                <li>Test‑only, best‑effort service: availability is not guaranteed; no quotas, no SLA.</li>
+                <li>Signaling only: your actual game data should go P2P over WebRTC DataChannels.</li>
+                <li>No explicit rate limiting; abusive traffic may be blocked at any time.</li>
+            </ul>
+        </li>
+    </ul>
+    <hr>
+    <h2>Connect to the WebSocket Signaling Server</h2>
+    <div>
+        <input type="text" id="serverUrl" placeholder="wss://your-signaling.server." value="wss://wss.getlost.ovh" style="width: 360px;">
+        <button id="connect">Connect</button>
+        <button id="disconnect" disabled>Disconnect</button>
+        <span id="status">Disconnected</span>
+    </div>
+    
+    <div id="messages"></div>
+    
+    <div>
+        <input type="text" id="roomId" placeholder="Room ID (e.g. test-room)" value="test-room">
+        <input type="text" id="playerId" placeholder="Player ID (e.g. player1)" value="player1">
+        <button id="join" disabled>Join Room</button>
+    </div>
+    
+    <div>
+        <input type="text" id="messageInput" placeholder="JSON message or text" style="width: 300px;">
+        <button id="send" disabled>Send</button>
+    </div>
+
+    <script>
+        let ws = null;
+        const messages = document.getElementById('messages');
+        const status = document.getElementById('status');
+        
+        function addMessage(msg, className = '') {
+            const div = document.createElement('div');
+            div.className = `message ${className}`;
+            div.textContent = `[${new Date().toLocaleTimeString()}] ${msg}`;
+            messages.appendChild(div);
+            messages.scrollTop = messages.scrollHeight;
+        }
+        
+        function updateUI(connected) {
+            document.getElementById('connect').disabled = connected;
+            document.getElementById('disconnect').disabled = !connected;
+            document.getElementById('join').disabled = !connected;
+            document.getElementById('send').disabled = !connected;
+            status.textContent = connected ? 'Connected' : 'Disconnected';
+            status.className = connected ? 'connected' : 'error';
+        }
+
+        function normalizeUrl(raw) {
+            if (!raw) return '';
+            const lower = raw.toLowerCase();
+            if (lower.startsWith('ws://') || lower.startsWith('wss://')) return raw;
+            if (lower.startsWith('http://')) return 'ws://' + raw.slice('http://'.length);
+            if (lower.startsWith('https://')) return 'wss://' + raw.slice('https://'.length);
+            // default to secure websocket if no scheme is provided
+            return 'wss://' + raw;
+        }
+        
+        document.getElementById('connect').onclick = () => {
+            if (ws) return;
+            const serverInput = document.getElementById('serverUrl');
+            const raw = serverInput && serverInput.value ? serverInput.value.trim() : '';
+            const url = normalizeUrl(raw);
+            if (!url) {
+                addMessage('Please provide a WebSocket URL (e.g. wss://your-signaling.example)', 'error');
+                return;
+            }
+            addMessage(`Attempting connection to ${url}...`);
+
+            try {
+                // basic URL validation
+                try { new URL(url); } catch { throw new Error('Invalid WebSocket URL'); }
+                ws = new WebSocket(url);
+                
+                // Connection timeout after 10 seconds
+                const connectionTimeout = setTimeout(() => {
+                    if (ws.readyState === WebSocket.CONNECTING) {
+                        addMessage('Connection timeout (10s)', 'error');
+                        ws.close();
+                        ws = null;
+                        updateUI(false);
+                    }
+                }, 10000);
+                
+                ws.onopen = () => {
+                    clearTimeout(connectionTimeout);
+                    addMessage('Connected successfully!', 'connected');
+                    addMessage(`ReadyState: ${ws.readyState} (1 = OPEN)`);
+                    updateUI(true);
+                };
+                
+                ws.onmessage = (event) => {
+                    addMessage(`<- Received: ${event.data}`);
+                };
+                
+                ws.onclose = (event) => {
+                    clearTimeout(connectionTimeout);
+                    const closeDetails = {
+                        code: event.code,
+                        reason: event.reason || 'No reason provided',
+                        wasClean: event.wasClean
+                    };
+                    addMessage(`Connection closed: ${JSON.stringify(closeDetails)}`, 'error');
+                    
+                    // Common error codes
+                    const errorCodes = {
+                        1000: 'Normal closure',
+                        1001: 'Endpoint going away',
+                        1002: 'Protocol error',
+                        1003: 'Unsupported data type',
+                        1006: 'Connection closed abnormally (often network/proxy issue)',
+                        1011: 'Server error',
+                        1015: 'TLS handshake failure'
+                    };
+                    
+                    if (errorCodes[event.code]) {
+                        addMessage(`Code ${event.code}: ${errorCodes[event.code]}`, 'error');
+                    }
+                    
+                    ws = null;
+                    updateUI(false);
+                };
+                
+                ws.onerror = (error) => {
+                    clearTimeout(connectionTimeout);
+                    const errorDetails = {
+                        type: error.type,
+                        target: error.target.readyState,
+                        url: url,
+                        timestamp: error.timeStamp
+                    };
+                    addMessage(`Connection error: ${JSON.stringify(errorDetails)}`, 'error');
+                    addMessage(`ReadyState during error: ${ws.readyState} (0=CONNECTING, 1=OPEN, 2=CLOSING, 3=CLOSED)`);
+                    console.error('WebSocket error details:', error);
+                    console.error('WebSocket state:', ws.readyState);
+                    console.error('WebSocket URL:', url);
+                };
+                
+            } catch (e) {
+                addMessage(`Error creating WebSocket: ${e.message}`, 'error');
+                ws = null;
+                updateUI(false);
+            }
+        };
+        
+        document.getElementById('disconnect').onclick = () => {
+            if (ws) {
+                ws.close();
+                ws = null;
+                updateUI(false);
+            }
+        };
+        
+        document.getElementById('join').onclick = () => {
+            const roomId = document.getElementById('roomId').value;
+            const playerId = document.getElementById('playerId').value;
+            
+            if (!roomId || !playerId) {
+                alert('Please enter Room ID and Player ID');
+                return;
+            }
+            
+            const message = {
+                roomId: roomId,
+                kind: 'join',
+                from: playerId,
+                announce: true
+            };
+            
+            ws.send(JSON.stringify(message));
+            addMessage(`-> Sent: ${JSON.stringify(message)}`);
+        };
+        
+        document.getElementById('send').onclick = () => {
+            const input = document.getElementById('messageInput');
+            const text = input.value.trim();
+            
+            if (!text) return;
+            
+            try {
+                // Try to parse as JSON
+                const obj = JSON.parse(text);
+                ws.send(JSON.stringify(obj));
+            } catch (e) {
+                // If not JSON, create a basic message
+                const roomId = document.getElementById('roomId').value || 'test-room';
+                const playerId = document.getElementById('playerId').value || 'player1';
+                const message = {
+                    roomId: roomId,
+                    kind: 'message',
+                    from: playerId,
+                    data: text
+                };
+                ws.send(JSON.stringify(message));
+            }
+            
+            addMessage(`-> Sent: ${text}`);
+            input.value = '';
+        };
+        
+        // Send with Enter key
+        document.getElementById('messageInput').onkeypress = (e) => {
+            if (e.key === 'Enter') {
+                document.getElementById('send').click();
+            }
+        };
+        
+        updateUI(false);
+    </script>
+</body>
+</html>

@@ -18,12 +18,9 @@ describe('serialization', () => {
     const dec = s.decode(enc as ArrayBuffer);
     expect(dec).toEqual(sample);
   });
-  it('json+gzip falls back to json encode/decode', () => {
-    const s = createSerializer('json+gzip');
-    const enc = s.encode(sample);
-    expect(typeof enc).toBe('string');
-    const dec = s.decode(enc as string);
-    expect(dec).toEqual(sample);
+  it('throws on unknown strategy', () => {
+    // @ts-expect-error: testing invalid strategy
+    expect(() => createSerializer('unknown')).toThrowError();
   });
 });
 

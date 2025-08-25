@@ -21,10 +21,6 @@ export function createSerializer(strategy: SerializationStrategy = "json"): Seri
       decode: (data) => JSON.parse(typeof data === "string" ? data : dec.decode(data as ArrayBuffer)),
     };
   }
-  // json+gzip would require a gzip impl; leave as json for now
-  return {
-    encode: (msg) => JSON.stringify(msg),
-    decode: (data) => (typeof data === "string" ? JSON.parse(data) : JSON.parse(new TextDecoder().decode(data))),
-  };
+  throw new Error(`Unknown serialization strategy: ${String(strategy)}`);
 }
 

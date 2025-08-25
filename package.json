@@ -1,6 +1,6 @@
 {
   "name": "@p2play-js/p2p-game",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Modular TypeScript library for browser-based P2P (WebRTC) multiplayer games with state sync and consistency strategies",
   "type": "module",
   "main": "dist/index.js",

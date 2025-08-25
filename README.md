@@ -2,6 +2,10 @@
 
 Modular TypeScript library to build browser-based P2P (WebRTC) multiplayer games, with state synchronization and consistency strategies.
 
+### Visual Example / Demo
+
+[![Demo](https://raw.githubusercontent.com/aguiran/p2play-js/refs/heads/main/examples/demo-p2play-js.gif)](https://github.com/aguiran/p2play-js/tree/main/examples)
+
 <!-- Badges -->
 [![CI](https://github.com/aguiran/p2play-js/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/aguiran/p2play-js/actions/workflows/ci.yml)
 [![npm version](https://img.shields.io/npm/v/@p2play-js/p2p-game.svg)](https://www.npmjs.com/package/@p2play-js/p2p-game)
@@ -96,7 +100,7 @@ multiplayer.setStateAndBroadcast("playerA", [
 
 - WebRTC DataChannels (P2P) synchronization + WebSocket signaling (rooms)
 - Global shared state: players, inventories, objects, tick
-- Sync strategies: `full`, `delta` (practically “hybrid” using both)
+- Sync strategies: `full`, `delta`. The library accepts both message types; your app decides when to send full snapshots vs delta updates. The `syncStrategy` option is advisory and does not automatically switch internal behavior.
 - Consistency strategies: `timestamp`, `authoritative`
 - Event handling: movement, inventories, transfers, shared payloads
 - Ping overlay: per-peer latency, simple chart
@@ -157,9 +161,16 @@ Configure interpolation/extrapolation and collisions via the `movement` option p
 - smoothing: smoothing factor [0..1]. Higher reduces jitter but adds visual inertia.
 - extrapolationMs: max extrapolation window (ms). Limits how long we project a position when updates are late.
 - worldBounds: `{ width, height, depth? }` to avoid leaving the map (Z optional).
+- ignoreWorldBounds: if `true`, disables all clamping against `worldBounds` (infinite/open world). Collisions remain player-vs-player only; no boundary collisions are applied.
 - playerRadius: radius used for circle/sphere collision detection/resolution.
 
 Integration principle (per axis): `position += clamp(velocity, ±maxSpeed) * dt * smoothing`, with `dt` capped by `extrapolationMs`. Timestamps are fed on every `playerMove` to keep extrapolation consistent.
+
+Defaults and behaviors:
+
+- If you provide `movement.worldBounds`, it will be used for XY clamping and optionally Z if `depth > 0`.
+- If you omit `movement.worldBounds`, defaults are applied: `{ width: 2000, height: 2000 }` and Z is unbounded unless `depth` is provided.
+- If you set `movement.ignoreWorldBounds: true`, no coordinate clamping is applied on X/Y/Z even if `worldBounds` is present.
 
 Example:
 
@@ -171,6 +182,8 @@ const multiplayer = new P2PGameLibrary({
     smoothing: 0.25,
     extrapolationMs: 140,
     worldBounds: { width: 4000, height: 3000, depth: 500 },
+    // or disable bounds entirely for open worlds:
+    // ignoreWorldBounds: true,
     playerRadius: 20,
   },
 });
@@ -184,6 +197,25 @@ const multiplayer = new P2PGameLibrary({
 Ordering & deduplication
 - Each application message carries `seq` (per‑sender monotonic counter). Receivers ignore any `seq` ≤ last seen for that sender.
 - Last‑Writer‑Wins (LWW): the “latest author” (largest `seq` for a given sender) wins. No echoes: peers never re‑broadcast application messages.
+
+#### Authoritative mode: détails et implications
+
+- **Source d’autorité**: par défaut, si `conflictResolution: "authoritative"` est actif et que `authoritativeClientId` n’est pas fourni, l’ID de l’hôte courant devient l’autorité. Lors d’un `hostChange`, si aucune autorité n’est explicitement définie, elle bascule automatiquement vers le nouvel hôte.
+- **Application des actions**: seules les actions émanant de l’`authoritativeClientId` sont acceptées (mouvement, inventaire, transferts). Les actions des autres pairs sont ignorées par la logique interne.
+- **Expérience côté client non autoritaire**:
+  - Vos actions locales ne sont pas appliquées directement. Vous devez soit:
+    - Relayer vos intentions à l’autorité (ex. via payload/application protocol) qui appliquera la mutation et la diffusera, ou
+    - Faire de l’optimistic UI côté client, puis accepter les corrections (les deltas reçus depuis l’autorité). La lib ne fournit pas de mécanisme de reconciliation automatique; votre appli doit gérer l’UI optimiste et l’acceptation des corrections.
+  - **Latence**: la latence perçue est au minimum un aller‑retour jusqu’à l’autorité (RTT) avant de voir l’état partagé mis à jour.
+- **Host migration**:
+  - L’hôte est élu de manière déterministe (plus petit `playerId`). Sur perte d’hôte, une ré‑élection a lieu et un `hostChange` est émis.
+  - Si aucune autorité explicite n’est définie, l’autorité basculera vers le nouvel hôte automatiquement.
+  - Le nouvel hôte enverra un `state_full` pour réaligner tout le monde.
+- **Sécurité/anti‑triche**: ce mode reste « client‑autoritaire » (autorité = un client). Il n’est pas conçu pour être cheat‑proof. Pour un modèle réellement sécurisé, utilisez un serveur/hôte de confiance (headless) et définissez explicitement `authoritativeClientId`.
+- **Bonnes pratiques**:
+  - Fixer `authoritativeClientId` vers un hôte contrôlé (ex. serveur headless) pour éviter les bascules d’autorité indésirables.
+  - Standardiser un protocole d’« intents » côté client non autoritaire (ex. demandes de déplacement), validées/appliquées par l’autorité, puis répercutées via `state_delta`.
+  - Monitorer la latence (`ping` events) et adapter l’UI (prédiction visuelle locale, lissage) pour réduire l’impact perçu.
 
 ### Serialization / compression
 
@@ -210,7 +242,54 @@ Use `WebSocketSignaling(localId, roomId, serverUrl)` to relay offers/answers/ICE
 
 ### Examples
 
-- Complete: `examples/complete/index.html`
+#### Basic WebSocket Test: `examples/basic/index.html`
+
+A standalone WebSocket testing tool to verify connectivity with your signaling server before implementing full P2P logic.
+
+**Purpose**:
+- **Connectivity testing**: Validates that your WebSocket signaling server is accessible and working correctly
+- **Network debugging**: Diagnoses connection issues (firewall, proxy, TLS certificates)
+- **Protocol understanding**: Visualizes signaling message exchanges (roster, routing)
+- **STUN/TURN configuration**: Tests different servers before P2P integration
+
+**Features**:
+- WebSocket connection with detailed error handling and timeout
+- Automatic support for ws:// and wss:// schemes
+- Interface to join rooms and announce presence
+- Send arbitrary JSON messages or simple text
+- WebSocket error code display with explanations
+- Detailed exchange logging (timestamp, direction, content)
+
+**Usage**:
+1. Open `examples/basic/index.html` in your browser
+2. Configure your server URL (default: `wss://wss.getlost.ovh`)
+3. Click "Connect" to establish the WebSocket connection
+4. Enter a Room ID and Player ID, then click "Join Room"
+5. Send messages to test communication
+
+**Public test server**:
+- URL: `wss://wss.getlost.ovh`
+- Status: Free signaling server for testing purposes only
+- **Limitations**: No authentication, no persistence, best-effort service
+- **Security**: Do not send sensitive data, TLS transport encryption only
+
+#### Complete Demo: `examples/complete/index.html`
+
+Comprehensive P2P multiplayer game demonstrating the library's core capabilities:
+
+**Architecture showcase:**
+- **State management**: Comparison of sync strategies (delta vs full)
+- **Conflict resolution**: Choose between timestamp and authoritative modes (select before clicking Start)
+- **Network topology**: Full-mesh P2P with deterministic host election
+- **Movement system**: Interpolation, extrapolation, and collision detection in action
+
+**Advanced features:**
+- **Resilience**: Automatic host migration when players disconnect
+- **Performance**: State delta updates and basic backpressure handling
+- **Debugging**: Real-time event logging and network diagnostics
+- **Scalability**: Multi-player synchronization; configurable player limits
+
+See the "Local dev servers" section below for setup and usage instructions. In the demo UI, pick the strategy and mode, then click Start.
 
 ### Events
 
@@ -226,11 +305,14 @@ Use `WebSocketSignaling(localId, roomId, serverUrl)` to relay offers/answers/ICE
 | peerLeave        | (playerId)                                         | Peer disconnected        |
 | hostChange       | (hostId)                                           | New host                 |
 | ping             | (playerId, ms)                                     | RTT to peer              |
+| maxCapacityReached | (maxPlayers)                                     | Capacity reached; new connections refused |
 
 ### Lifecycle & presence
 
 - Presence: `announcePresence(playerId)` is recommended to emit an initial move so peers render the player immediately.
-- `peerJoin`/`peerLeave`: the UI can show/hide entities; host‑side state cleanup (removing a player from structures) is left to your logic (send a cleanup delta).
+- `peerJoin`/`peerLeave`: the UI can show/hide entities. Host‑side cleanup can be automated by enabling `cleanupOnPeerLeave: true` in `P2PGameLibrary` options: the host removes the leaving player's entries and broadcasts a delta accordingly.
+- `peerJoin`/`peerLeave`: the UI can show/hide entities. Host‑side cleanup can be automated by enabling `cleanupOnPeerLeave: true` in `P2PGameLibrary` options: the host removes the leaving player's entries and broadcasts a delta accordingly.
+- Capacity limit: set `maxPlayers` to cap the room size. When capacity is reached, the library will not initiate new connections and will ignore incoming offers; it emits `maxCapacityReached(maxPlayers)` so you can inform the user/UI.
 
 ### Performance & best practices
 
