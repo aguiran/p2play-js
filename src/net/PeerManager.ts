@@ -205,7 +205,10 @@ constructor(bus: EventBus, signaling: SignalingAdapter, serializationStrategy: S
           try {
             if (typeof payload === "string") dc.send(payload);
             else dc.send(payload);
-          } catch {}
+          } catch (error) {
+            console.warn(`Failed to send queued message to peer ${info.id}:`, error);
+            // Continue with other messages even if one fails
+          }
         }
         info.outbox = [];
       }
@@ -341,7 +344,10 @@ constructor(bus: EventBus, signaling: SignalingAdapter, serializationStrategy: S
           const txt = typeof prev === 'string' ? prev : new TextDecoder().decode(prev as ArrayBuffer);
           const parsed = JSON.parse(txt);
           if (parsed && parsed.t === 'move') { box[i] = payload; return; }
-        } catch {}
+        } catch (error) {
+          // Invalid message in outbox, skip coalescing for this item
+          console.debug(`Invalid message in outbox, skipping coalesce:`, error);
+        }
       }
     }
     if (this.backpressure.strategy === "drop-moves" && message.t === "move") {

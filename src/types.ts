@@ -1,4 +1,4 @@
-export type SyncStrategy = "full" | "delta" | "hybrid";
+export type SyncStrategy = "full" | "delta";
 export type ConflictResolution = "timestamp" | "authoritative";
 export type SerializationStrategy = "json" | "binary-min";
 

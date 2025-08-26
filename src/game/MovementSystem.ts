@@ -24,7 +24,9 @@ export class MovementSystem {
         const now = performance.now();
         this.lastMoveTsByPlayer.set(playerId, now);
         this.lastFrameTsByPlayer.set(playerId, now);
-      } catch {}
+      } catch (error) {
+        console.warn(`Failed to update movement timestamps for player ${playerId}:`, error);
+      }
     });
   }
 

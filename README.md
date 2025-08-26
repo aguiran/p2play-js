@@ -68,6 +68,11 @@ multiplayer.on("hostChange", (hostId) => {
 });
 ```
 
+### FULL API
+
+📚 **Full documentation available at**: https://www.getlost.ovh  
+*Comprehensive guide covering complete API reference with all methods and types, detailed architecture explanations (WebRTC full-mesh topology, state synchronization strategies), networking specifics (signaling protocols, STUN/TURN configuration, backpressure handling), advanced movement system (interpolation, extrapolation, collision detection), real-world examples and game workflow patterns, plus production deployment best practices and troubleshooting guides*
+
 #### Sending actions
 
 ```ts
