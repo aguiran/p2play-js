@@ -14,6 +14,7 @@
       input, select, button { width: 100%; padding: 6px 8px; }
       #log { white-space: pre-wrap; font-size: 12px; background: #111; padding: 8px; height: 160px; overflow: auto; }
       .pill { display: inline-block; padding: 2px 6px; background: #333; border-radius: 6px; margin-left: 6px; }
+      a, a:hover{color:#eee}
     </style>
   </head>
   <body>
@@ -42,6 +43,11 @@
         </select>
       </div>
       <div class="row">
+        <label>Signaling Server</label>
+        <input id="signaling" value="ws://localhost:8787" placeholder="ws://localhost:8787" />
+        <small style="color: #999; font-size: 11px;">For testing with public server, use: wss://wss.getlost.ovh</small>
+      </div>
+      <div class="row">
         <button id="start">Start</button>
       </div>
       <div class="row">
@@ -51,6 +57,7 @@
         <div>Host: <span id="host" class="pill">-</span></div>
       </div>
       <div id="log"></div>
+      <div class="row">Find <a href="http://www.getlost.ovh/?utm_source=complete" target="_blank">full documentation here</a> and <a href="https://github.com/aguiran/p2play-js" target="_blank">Github Repo here</a>.</div>
     </aside>
     <main>
       <canvas id="game"></canvas>
@@ -139,12 +146,13 @@
         const conf = document.getElementById('conf').value;
         const sync = document.getElementById('sync').value;
 
+        const signalingUrl = document.getElementById('signaling').value || 'ws://localhost:8787';
         multiplayer = new P2PGameLibrary({
           maxPlayers: 8,
           syncStrategy: sync,
           conflictResolution: conf,
           pingOverlay: { enabled: true, position: 'top-right', canvas: null },
-          signaling: new WebSocketSignaling(id, roomId, 'ws://localhost:8787'),
+          signaling: new WebSocketSignaling(id, roomId, signalingUrl),
           authoritativeClientId: undefined,
           roomId,
           debug: {

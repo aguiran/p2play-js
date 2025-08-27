@@ -13,6 +13,10 @@ Modular TypeScript library to build browser-based P2P (WebRTC) multiplayer games
 
 [![Demo](https://raw.githubusercontent.com/aguiran/p2play-js/refs/heads/main/examples/demo-p2play-js.gif)](https://github.com/aguiran/p2play-js/tree/main/examples)
 
+**[Basic demo](https://www.getlost.ovh/example/basic.html?utm_source=github)**
+
+**[Complete demo](https://www.getlost.ovh/example/complete.html?utm_source=github)**
+
 ### Installation
 
 ```bash
