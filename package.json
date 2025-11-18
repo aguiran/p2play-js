@@ -39,7 +39,7 @@
   "license": "MIT",
   "sideEffects": false,
   "devDependencies": {
-    "@vitest/coverage-v8": "^3.2.4",
+    "@vitest/coverage-v8": "^4.0.10",
     "typescript": "^5.5.4",
     "vitest": "^3.2.4",
     "ws": "^8.17.1"
