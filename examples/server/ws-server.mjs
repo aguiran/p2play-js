@@ -1,6 +1,7 @@
 import { WebSocketServer } from 'ws';
 
 const port = process.env.PORT || 8787;
+const debugLogs = process.env.DEBUG_LOGS === '1';
 const wss = new WebSocketServer({ port });
 
 // Map roomId -> { sockets: Set(ws), roster: Set<string> }
@@ -16,7 +17,7 @@ function getRoom(roomId) {
 }
 
 function logRoomsSummary() {
-  const summary = [...rooms.entries()].map(([rid, set]) => `${rid}(${set.size})`).join(', ') || 'none';
+  const summary = [...rooms.entries()].map(([rid, room]) => `${rid}(${room.sockets.size})`).join(', ') || 'none';
   console.log(`[rooms] ${summary}`);
 }
 
@@ -30,13 +31,13 @@ wss.on('connection', (ws, req) => {
     try {
       msg = JSON.parse(data.toString());
     } catch (e) {
-      console.warn(`[conn#${id}] invalid JSON (${data.toString().slice(0, 120)}...)`);
+      console.warn(`[conn#${id}] invalid JSON, message ignored (${data.toString().slice(0, 120)}...)`);
       return;
     }
     if (!msg || typeof msg !== 'object') return;
     const { roomId, kind, from, to, announce } = msg;
     if (!roomId) {
-      console.warn(`[conn#${id}] message without roomId ignored`);
+      console.warn(`[conn#${id}] message ignored: missing roomId`);
       return;
     }
     const room = getRoom(roomId);
@@ -73,7 +74,9 @@ wss.on('connection', (ws, req) => {
         }
       }
     }
-    console.log(`[room:${roomId}] kind=${kind || 'data'} from=${from} to=${to || 'all'} delivered=${delivered} size=${payloadSize}B`);
+    if (debugLogs) {
+      console.log(`[room:${roomId}] kind=${kind || 'data'} from=${from} to=${to || 'all'} delivered=${delivered} size=${payloadSize}B`);
+    }
   });
 
   ws.on('close', () => {
