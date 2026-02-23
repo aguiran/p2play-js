@@ -13,22 +13,31 @@ export class PingOverlay {
   private canvas: HTMLCanvasElement;
   private ctx: CanvasRenderingContext2D;
   private pingHistory: Map<PlayerId, number[]> = new Map();
+  private ownCanvas: boolean;
+  private unsub: () => void;
 
   constructor(bus: EventBus, opts: PingOverlayOptions = {}) {
     this.enabled = opts.enabled ?? false;
     this.position = opts.position ?? "top-right";
+    this.ownCanvas = opts.canvas == null;
     this.canvas = opts.canvas ?? this.createCanvas();
     const ctx = this.canvas.getContext("2d");
     if (!ctx) throw new Error("CanvasRenderingContext2D not available");
     this.ctx = ctx;
 
-    bus.on("ping", (playerId, ms) => {
+    this.unsub = bus.on("ping", (playerId, ms) => {
       const arr = this.pingHistory.get(playerId) ?? [];
       arr.push(ms);
       if (arr.length > 60) arr.shift();
       this.pingHistory.set(playerId, arr);
       if (this.enabled) this.draw();
     });
+  }
+
+  dispose(): void {
+    this.unsub();
+    this.pingHistory.clear();
+    if (this.ownCanvas && this.canvas.parentNode) this.canvas.remove();
   }
 
   setEnabled(enabled: boolean) {

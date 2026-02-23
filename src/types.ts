@@ -1,10 +1,8 @@
-export type SyncStrategy = "full" | "delta";
 export type ConflictResolution = "timestamp" | "authoritative";
 export type SerializationStrategy = "json" | "binary-min";
 
 export interface GameLibOptions {
   maxPlayers?: number;
-  syncStrategy?: SyncStrategy;
   conflictResolution?: ConflictResolution;
   authoritativeClientId?: string;
   serialization?: SerializationStrategy;
@@ -34,6 +32,11 @@ export interface SendDebugInfo {
 export interface DebugOptions {
   enabled?: boolean;
   onSend?: (info: SendDebugInfo) => void;
+}
+
+export interface SendOptions {
+  /** Force sending via the unreliable DataChannel (no retransmission). By default, only move/ping use unreliable. */
+  unreliable?: boolean;
 }
 
 export type BackpressureStrategy = "off" | "drop-moves" | "coalesce-moves";

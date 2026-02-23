@@ -10,7 +10,9 @@ export default defineConfig({
         'src/events/**/*.ts',
         'src/sync/**/*.ts',
         'src/game/MovementSystem.ts',
-        'src/net/serialization.ts'
+        'src/net/serialization.ts',
+        'src/net/PeerManager.ts',
+        'src/net/WebSocketSignaling.ts'
       ],
       exclude: ['src/index.ts'],
     },

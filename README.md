@@ -31,7 +31,6 @@ import { P2PGameLibrary, WebSocketSignaling } from "@p2play-js/p2p-game";
 const signaling = new WebSocketSignaling("playerA", "room-42", "ws://localhost:8787");
 const multiplayer = new P2PGameLibrary({
   maxPlayers: 4,
-  syncStrategy: "delta",
   conflictResolution: "timestamp",
   pingOverlay: { enabled: true, position: "top-right" },
   signaling,
@@ -104,11 +103,40 @@ multiplayer.setStateAndBroadcast("playerA", [
 ### Implemented concepts
 
 - WebRTC DataChannels (P2P) synchronization + WebSocket signaling (rooms)
-- Global shared state: players, inventories, objects, tick
-- Sync strategies: `full`, `delta`. The library accepts both message types; your app decides when to send full snapshots vs delta updates. The `syncStrategy` option is advisory and does not automatically switch internal behavior.
+- **Dual DataChannels per peer**: automatic routing between a fast unreliable channel (move/ping) and a reliable channel (inventory, transfers, state sync, payloads)
+- Global shared state: players, inventories, objects, tick. `getState()` returns a deep copy so mutations do not affect internal state; use `broadcastMove()`, `setStateAndBroadcast()`, etc. to mutate and sync.
+- Sync strategies: the library handles both full snapshots (`state_full`) and delta updates (`state_delta`). Your app decides when to send each via `broadcastFullState()` or `broadcastDelta()`.
 - Consistency strategies: `timestamp`, `authoritative`
 - Event handling: movement, inventories, transfers, shared payloads
 - Ping overlay: per-peer latency, simple chart
+
+### Dual DataChannels (reliable / unreliable)
+
+Each peer connection uses **two separate DataChannels** for optimal performance and reliability:
+
+| Channel | Label | Config | Message types |
+|---------|-------|--------|---------------|
+| Unreliable | `game-unreliable` | `ordered: false, maxRetransmits: 0` | `move`, `ping`, `pong` |
+| Reliable | `game-reliable` | `ordered: true` (SCTP default = reliable) | `inventory`, `transfer`, `state_full`, `state_delta`, `payload` |
+
+Routing is automatic based on message type. You can override it for normally-reliable messages by passing `{ unreliable: true }`:
+
+```ts
+// Sent via reliable channel (default for payloads)
+multiplayer.broadcastPayload("playerA", { hp: 37 }, "status");
+
+// Force unreliable channel (lower latency, no retransmission)
+multiplayer.broadcastPayload("playerA", { cursor: { x: 100, y: 200 } }, "cursor", { unreliable: true });
+
+// Same override available on:
+multiplayer.updateInventory("playerA", items, { unreliable: true });
+multiplayer.transferItem("playerA", "playerB", item, { unreliable: true });
+multiplayer.sendPayload("playerA", "playerB", data, "channel", { unreliable: true });
+```
+
+`broadcastMove` always uses unreliable (by design). `broadcastFullState` and `broadcastDelta` always use reliable (critical data).
+
+> **Migration note**: Prior versions used a single DataChannel named `"game"`. The library now creates two channels per peer: `"game-unreliable"` and `"game-reliable"`. If you accessed `PeerInfo.dc` or `PeerInfo.outbox` directly, migrate to `dcUnreliable`/`dcReliable` and `outboxUnreliable`/`outboxReliable`. If you intercepted `ondatachannel` events, note that it now fires twice per peer (once per channel, identified by `label`).
 
 ### Network and signaling
 
@@ -213,7 +241,7 @@ Ordering & deduplication
     - Implement optimistic UI and accept corrections (authority deltas). The library doesn’t provide automatic reconciliation; your app must handle optimism and corrections.
   - **Latency**: perceived latency is at least one round trip to the authority (RTT) before shared state updates are visible.
 - **Host migration**:
-  - The host is elected deterministically (smallest `playerId`). On host loss, re‑election occurs and a `hostChange` is emitted.
+  - The host is elected deterministically by a total order on `playerId`: numeric comparison when both IDs are digit-only strings (e.g. `"2"` before `"10"`), otherwise strict binary string order (e.g. `"A"` before `"B"`, `"2"` before `"A"`). On host loss, re‑election occurs and a `hostChange` is emitted.
   - If no explicit authority is set, authority automatically switches to the new host.
   - The new host sends a `state_full` to realign everyone.
 - **Security/anti‑cheat**: this remains a “client‑authoritative” model (authority = a client). It isn’t cheat‑proof. For a secure model, use a trusted/headless host and set `authoritativeClientId` explicitly.
@@ -238,7 +266,7 @@ Ordering & deduplication
 
 - Rooms: group isolation via the WS server.
 - Full‑mesh: every peer establishes a direct link to all others (deterministic initiation via roster and IDs).
-- Deterministic host election (smallest id) and automatic migration on host loss via `hostChange`.
+- Deterministic host election: numeric order for digit-only IDs (e.g. `"2"` before `"10"`), strict binary order otherwise. Automatic migration on host loss via `hostChange`.
 - Host sends `state_full` on join/migration to realign everyone.
 
 ### WebSocket signaling

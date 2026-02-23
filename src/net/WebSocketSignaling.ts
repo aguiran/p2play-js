@@ -12,6 +12,7 @@ type SignalEnvelope = {
 
 export class WebSocketSignaling implements SignalingAdapter {
   public ws: WebSocket;
+  private _wired = false;
   private descHandlers: Array<(desc: RTCSessionDescriptionInit, from: PlayerId) => void> = [];
   private iceHandlers: Array<(candidate: RTCIceCandidateInit, from: PlayerId) => void> = [];
   private rosterHandlers: Array<(roster: PlayerId[]) => void> = [];
@@ -26,20 +27,23 @@ export class WebSocketSignaling implements SignalingAdapter {
   }
 
   private ensureWired() {
-    if ((this as any)._wired) return;
-    (this as any)._wired = true;
+    if (this._wired) return;
+    this._wired = true;
     this.ws.addEventListener("message", (ev) => {
       try {
-        const msg: any = JSON.parse(typeof ev.data === "string" ? ev.data : "{}");
+        const raw = typeof ev.data === "string" ? ev.data : "{}";
+        const msg = JSON.parse(raw) as Record<string, unknown>;
         if (!msg || msg.roomId !== this.roomId) return;
-        if (msg.sys === 'roster') {
+        if (msg.sys === "roster") {
           const roster = Array.isArray(msg.roster) ? (msg.roster as PlayerId[]) : [];
           this.rosterHandlers.forEach((h) => h(roster));
           return;
         }
+        if (typeof msg.from !== "string") return;
         if (msg.from === this.localId) return;
-        if (msg.kind === "desc") this.descHandlers.forEach((h) => h(msg.payload, msg.from));
-        if (msg.kind === "ice") this.iceHandlers.forEach((h) => h(msg.payload, msg.from));
+        const from = msg.from as PlayerId;
+        if (msg.kind === "desc" && msg.payload != null) this.descHandlers.forEach((h) => h(msg.payload as RTCSessionDescriptionInit, from));
+        if (msg.kind === "ice" && msg.payload != null) this.iceHandlers.forEach((h) => h(msg.payload as RTCIceCandidateInit, from));
       } catch {
         // ignore
       }
@@ -92,5 +96,12 @@ export class WebSocketSignaling implements SignalingAdapter {
       payload: candidate,
     };
     this.ws.send(JSON.stringify(env));
+  }
+
+  close(): void {
+    this.descHandlers.length = 0;
+    this.iceHandlers.length = 0;
+    this.rosterHandlers.length = 0;
+    this.ws.close();
   }
 }

@@ -42,15 +42,15 @@ Validation:
 
 **Objectif:** augmenter la securite des futurs refactors sans changer le comportement.
 
-- [ ] Inclure `src/net/PeerManager.ts` et `src/net/WebSocketSignaling.ts` dans la couverture Vitest.
-- [ ] Ajouter tests de robustesse parse message invalide/corrompu.
-- [ ] Ajouter tests anti-usurpation (`from` forge) pour verifier que l'identite transport prime sur le payload.
-- [ ] Ajouter tests host election (cas IDs "2" vs "10").
-- [ ] Ajouter tests de cycle de vie (connexion, deconnexion, leave roster).
+- [X] Inclure `src/net/PeerManager.ts` et `src/net/WebSocketSignaling.ts` dans la couverture Vitest.
+- [X] Ajouter tests de robustesse parse message invalide/corrompu.
+- [X] Ajouter tests anti-usurpation (`from` forge) pour verifier que l'identite transport prime sur le payload.
+- [X] Ajouter tests host election (cas IDs "2" vs "10").
+- [X] Ajouter tests de cycle de vie (connexion, deconnexion, leave roster).
 
 Validation:
-- [ ] Rapport coverage mis a jour.
-- [ ] Aucun changement d'API publique.
+- [X] Rapport coverage mis a jour.
+- [X] Aucun changement d'API publique.
 
 ---
 
@@ -58,13 +58,13 @@ Validation:
 
 **Objectif:** reduire les zones `any` et solidifier le contrat TypeScript.
 
-- [ ] Remplacer progressivement les `as any` evitables.
-- [ ] Renforcer les signatures d'evenements (`EventBus`, `P2PGameLibrary.on`).
-- [ ] Ajouter des guards runtime minimaux pour les `NetMessage` avant application.
+- [X] Remplacer progressivement les `as any` evitables.
+- [X] Renforcer les signatures d'evenements (`EventBus`, `P2PGameLibrary.on`).
+- [X] Ajouter des guards runtime minimaux pour les `NetMessage` avant application.
 
 Validation:
-- [ ] Build TypeScript strict sans degradation.
-- [ ] Tests existants + nouveaux tests de guards verts.
+- [X] Build TypeScript strict sans degradation.
+- [X] Tests existants + nouveaux tests de guards verts.
 
 ---
 
@@ -72,15 +72,15 @@ Validation:
 
 **Objectif:** mieux gerer la duree de vie sans changer l'architecture protocolaire.
 
-- [ ] Ajouter `stop()/dispose()` sur `P2PGameLibrary` (close RTC, WS, timers ping, listeners).
-- [ ] Eviter fuites memoire (intervals/listeners non nettoyes).
-- [ ] Durcir le parsing JSON dans `PeerManager.onMessage` (try/catch + rejet propre).
-- [ ] Ajouter timeout + cleanup explicite des `pendingInitiators` (echec/abandon de negociation) pour eviter le blocage de capacite.
+- [X] Ajouter `stop()/dispose()` sur `P2PGameLibrary` (close RTC, WS, timers ping, listeners).
+- [X] Eviter fuites memoire (intervals/listeners non nettoyes).
+- [X] Durcir le parsing JSON dans `PeerManager.onMessage` (try/catch + rejet propre).
+- [X] Ajouter timeout + cleanup explicite des `pendingInitiators` (echec/abandon de negociation) pour eviter le blocage de capacite.
 
 Validation:
-- [ ] Test "start -> stop -> start" sans fuite evidente.
-- [ ] Aucun crash sur trames invalides.
-- [ ] Aucun `pendingInitiator` orphelin apres timeout/erreur de negotiation.
+- [X] Test "start -> stop -> start" sans fuite evidente.
+- [X] Aucun crash sur trames invalides.
+- [X] Aucun `pendingInitiator` orphelin apres timeout/erreur de negotiation.
 
 ---
 
@@ -88,13 +88,13 @@ Validation:
 
 **Objectif:** fiabiliser certaines decisions deterministes sans gros redesign.
 
-- [ ] Corriger l'election d'hote (tri deterministe robuste, pas un simple tri lexicographique).
-- [ ] Clarifier le comportement de `syncStrategy` (doc + eventuel renommage non cassant).
-- [ ] Encadrer les mutations d'etat exposees via `getState()` (lecture seule ou clone selon compromis perf).
+- [X] Corriger l'election d'hote (tri deterministe robuste, pas un simple tri lexicographique).
+- [X] Clarifier le comportement de `syncStrategy` (option supprimée, lib gère full/delta sans option).
+- [X] Encadrer les mutations d'etat exposees via `getState()` (lecture seule ou clone selon compromis perf).
 
 Validation:
-- [ ] Scenarios host migration passes.
-- [ ] Documentation alignee avec le comportement reel.
+- [X] Scenarios host migration passes.
+- [X] Documentation alignee avec le comportement reel.
 
 ---
 
@@ -102,13 +102,13 @@ Validation:
 
 **Objectif:** reduire le spoofing applicatif avant les gros chantiers reseau.
 
-- [ ] Cote reception P2P, ne jamais faire confiance au `from` entrant: recoller l'identite transport (peer RTC) sur le message applique.
-- [ ] Ajouter des guards runtime stricts sur les envelopes `NetMessage` (type, champs minimaux, rejet propre).
-- [ ] Ajouter un mode debug permettant de tracer les messages rejetes (sans bruit excessif).
+- [x] Cote reception P2P, ne jamais faire confiance au `from` entrant: recoller l'identite transport (peer RTC) sur le message applique.
+- [x] Ajouter des guards runtime stricts sur les envelopes `NetMessage` (type, champs minimaux, rejet propre).
+- [x] Ajouter un mode debug permettant de tracer les messages rejetes (sans bruit excessif).
 
 Validation:
-- [ ] Tests d'usurpation `from` verts (message forge rejete/neutralise).
-- [ ] Aucun changement d'API publique.
+- [x] Tests d'usurpation `from` verts (message forge rejete/neutralise).
+- [x] Aucun changement d'API publique (parametre optionnel additif uniquement).
 
 ---
 
@@ -116,28 +116,28 @@ Validation:
 
 **Objectif:** separer trafic "temps reel" et trafic "critique metier".
 
-- [ ] Introduire un canal `unreliable` pour `move/ping`.
-- [ ] Introduire un canal `reliable` pour `inventory/transfer/state_full/state_delta/payload critique`.
-- [ ] Garder compatibilite transitoire avec l'ancien canal unique (phase de migration).
+- [x] Introduire un canal `unreliable` pour `move/ping`.
+- [x] Introduire un canal `reliable` pour `inventory/transfer/state_full/state_delta/payload critique`.
+- [x] ~~Garder compatibilite transitoire avec l'ancien canal unique~~ (ecarte volontairement : migration directe, pas de phase transitoire. Note de migration ajoutee au README).
 
 Validation:
-- [ ] Tests de non-regression des evenements metier.
-- [ ] Mesure simple des pertes sur reseau degrade (avant/apres).
+- [x] Tests de non-regression des evenements metier.
+- [x] Mesure simple des pertes sur reseau degrade (avant/apres).
 
 ---
 
-## Lot 7 - ACK/retry pour messages critiques (impact eleve)
+## Lot 7 - Confirmation metier et metriques de livraison (impact moyen)
 
-**Objectif:** fiabiliser la livraison applicative sans serveur autoritaire.
+**Objectif:** permettre a l'application de savoir si un message cible a ete recu, et exposer des metriques de livraison.
 
-- [ ] Definir quels messages exigent ACK.
-- [ ] Ajouter identifiants de message + table de suivi.
-- [ ] Implementer retry borne + timeout + abandon explicite.
-- [ ] Exposer metriques/debug de livraison.
+Note: la fiabilite transport est deja couverte par le canal SCTP reliable (Lot 6). La deduplication est deja en place via `seq` + `lastAppliedSeq`. L'hydratation `state_full` au rejoin couvre la resynchronisation apres deconnexion. Ce lot ne concerne donc que la confirmation **metier** (le pair a bien traite le message) et l'observabilite.
+
+- [ ] ACK metier optionnel sur `send()` : callback `onAck` / `onTimeout` pour les messages cibles (`transfer`, `payload`). Pas sur `broadcast`.
+- [ ] Enrichir `debug.onSend` avec metriques par canal : messages livres, en outbox, echoues, par type de canal (reliable/unreliable).
 
 Validation:
-- [ ] Tests en conditions de perte (simulation).
-- [ ] Pas de duplication fonctionnelle cote etat (idempotence).
+- [ ] Test unitaire du callback ACK/timeout sur `send()`.
+- [ ] Test que l'ACK ne genere pas de duplication cote etat (idempotence deja couverte par `seq`).
 
 ---
 

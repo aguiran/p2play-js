@@ -3,10 +3,9 @@ import { GlobalGameState, MovementOptions, PlayerId } from "../types";
 
 export class MovementSystem {
   private cfg: Required<MovementOptions>;
-  // Timestamp of the last network movement received per player
   private lastMoveTsByPlayer: Map<PlayerId, number> = new Map();
-  // Timestamp of the last interpolation step per player (to compute frame dt)
   private lastFrameTsByPlayer: Map<PlayerId, number> = new Map();
+  private unsub: () => void;
 
   constructor(private bus: EventBus, private state: () => GlobalGameState, cfg: MovementOptions = {}) {
     this.cfg = {
@@ -18,8 +17,7 @@ export class MovementSystem {
       playerRadius: cfg.playerRadius ?? 16,
     } as Required<MovementOptions>;
 
-    // Track last network movement timestamp for consistent, bounded extrapolation
-    this.bus.on("playerMove", (playerId: PlayerId) => {
+    this.unsub = this.bus.on("playerMove", (playerId: PlayerId) => {
       try {
         const now = performance.now();
         this.lastMoveTsByPlayer.set(playerId, now);
@@ -28,6 +26,12 @@ export class MovementSystem {
         console.warn(`Failed to update movement timestamps for player ${playerId}:`, error);
       }
     });
+  }
+
+  dispose(): void {
+    this.unsub();
+    this.lastMoveTsByPlayer.clear();
+    this.lastFrameTsByPlayer.clear();
   }
 
   // Interpolate towards new remote positions to reduce jitter (3D)

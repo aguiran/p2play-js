@@ -28,14 +28,6 @@
         <input id="pid" value="P1" />
       </div>
       <div class="row">
-        <label>Sync Strategy</label>
-        <select id="sync">
-          <option value="delta" selected>delta</option>
-          <option value="full">full</option>
-          <option value="hybrid">hybrid</option>
-        </select>
-      </div>
-      <div class="row">
         <label>Conflict Resolution</label>
         <select id="conf">
           <option value="timestamp" selected>timestamp</option>
@@ -78,6 +70,8 @@
       let multiplayer;
       let id;
       const connected = new Set();
+      let myPos = { x: 50, y: 50, z: 0 };
+      let myVel = { x: 0, y: 0, z: 0 };
 
       const keys = new Set();
       window.addEventListener('keydown', (e) => keys.add(e.code));
@@ -89,21 +83,27 @@
         return colors[i];
       }
 
+      function drawPlayer(pid, x, y) {
+        const color = playerColor(pid);
+        ctx.fillStyle = color;
+        ctx.beginPath();
+        ctx.arc(x % canvas.width, y % canvas.height, 12, 0, Math.PI*2);
+        ctx.fill();
+        ctx.fillStyle = '#fff';
+        ctx.font = '10px sans-serif';
+        ctx.fillText(pid, (x % canvas.width) - 8, (y % canvas.height) - 16);
+      }
+
       function draw() {
         ctx.clearRect(0,0,canvas.width, canvas.height);
         const st = multiplayer?.getState();
         if (!st) return;
         for (const p of Object.values(st.players)) {
-          if (p.id !== id && !connected.has(p.id)) continue;
-          const color = playerColor(p.id);
-          ctx.fillStyle = color;
-          ctx.beginPath();
-          ctx.arc(p.position.x % canvas.width, p.position.y % canvas.height, 12, 0, Math.PI*2);
-          ctx.fill();
-          ctx.fillStyle = '#fff';
-          ctx.font = '10px sans-serif';
-          ctx.fillText(p.id, (p.position.x % canvas.width) - 8, (p.position.y % canvas.height) - 16);
+          if (p.id === id) continue;
+          if (!connected.has(p.id)) continue;
+          drawPlayer(p.id, p.position.x, p.position.y);
         }
+        if (multiplayer) drawPlayer(id, myPos.x, myPos.y);
       }
 
       function update(dt) {
@@ -111,9 +111,6 @@
         const authoritative = document.getElementById('conf').value === 'authoritative';
         const isHost = multiplayer.getHostId && multiplayer.getHostId() === id;
         const canMove = !authoritative || isHost;
-        const st = multiplayer.getState();
-        if (!st.players[id]) st.players[id] = { id, position: { x: 50, y: 50, z: 0 }, velocity: { x: 0, y: 0, z: 0 } };
-        const me = st.players[id];
         const speed = 200;
         const v = { x: 0, y: 0, z: 0 };
         if (canMove) {
@@ -124,11 +121,10 @@
         }
         const len = Math.hypot(v.x, v.y) || 1;
         v.x = v.x/len * speed; v.y = v.y/len * speed;
-        me.position.x += v.x * dt;
-        me.position.y += v.y * dt;
-        // z remains 0 in this demo; kept for compatibility with 3D movement
-        me.velocity = v;
-        if (v.x || v.y) multiplayer.broadcastMove(id, { x: me.position.x, y: me.position.y, z: me.position.z ?? 0 }, v);
+        myPos.x += v.x * dt;
+        myPos.y += v.y * dt;
+        myVel.x = v.x; myVel.y = v.y; myVel.z = v.z ?? 0;
+        if (v.x || v.y) multiplayer.broadcastMove(id, { x: myPos.x, y: myPos.y, z: myPos.z }, myVel);
       }
 
       let last = performance.now();
@@ -144,12 +140,10 @@
         id = document.getElementById('pid').value || 'P1';
         const roomId = document.getElementById('room').value || 'complete-room';
         const conf = document.getElementById('conf').value;
-        const sync = document.getElementById('sync').value;
 
         const signalingUrl = document.getElementById('signaling').value || 'ws://localhost:8787';
         multiplayer = new P2PGameLibrary({
           maxPlayers: 8,
-          syncStrategy: sync,
           conflictResolution: conf,
           pingOverlay: { enabled: true, position: 'top-right', canvas: null },
           signaling: new WebSocketSignaling(id, roomId, signalingUrl),
@@ -165,6 +159,8 @@
         await multiplayer.start();
         connected.clear();
         connected.add(id);
+        myPos = { x: 50, y: 50, z: 0 };
+        myVel = { x: 0, y: 0, z: 0 };
         // announce presence so that remote peers render us even before moving
         multiplayer.announcePresence(id, { x: 50, y: 50, z: 0 });
         multiplayer.on('hostChange', (host) => { document.getElementById('host').textContent = host; });

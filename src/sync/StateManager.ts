@@ -1,17 +1,16 @@
 import { ConflictResolver } from "./ConflictResolver";
 import {
   ConflictResolution,
+  DebugOptions,
   DeltaStateMessage,
   FullStateMessage,
   GlobalGameState,
-  InventoryUpdateMessage,
-  MoveMessage,
   NetMessage,
-    SharedPayloadMessage,
   PlayerId,
   StateDelta,
 } from "../types";
 import { EventBus } from "../events/EventBus";
+import { isValidNetMessage } from "../net/netMessageGuards";
 
 export class StateManager {
   private state: GlobalGameState;
@@ -19,15 +18,18 @@ export class StateManager {
   private resolver: ConflictResolver;
   private getLocalId: () => PlayerId | undefined;
   private lastAppliedSeq: Map<PlayerId, number> = new Map();
+  private debug: DebugOptions;
 
   constructor(
     bus: EventBus,
     mode: ConflictResolution,
     getAuthoritativeId: () => PlayerId | undefined,
     getMajority: () => PlayerId[],
-    getLocalId: () => PlayerId | undefined
+    getLocalId: () => PlayerId | undefined,
+    debug?: DebugOptions
   ) {
     this.bus = bus;
+    this.debug = debug ?? {};
     this.state = {
       players: {},
       inventories: {},
@@ -49,10 +51,10 @@ export class StateManager {
   setPathsValues(changes: Array<{ path: string; value: unknown }>): void {
     for (const change of changes) {
       const segments = change.path.split(".");
-      let cursor: any = this.state as any;
+      let cursor: Record<string, unknown> = this.state as unknown as Record<string, unknown>;
       for (let i = 0; i < segments.length - 1; i++) {
         const seg = segments[i];
-        cursor = cursor[seg] ?? (cursor[seg] = {});
+        cursor = (cursor[seg] ?? (cursor[seg] = {})) as Record<string, unknown>;
       }
       cursor[segments[segments.length - 1]] = structuredClone(change.value);
     }
@@ -90,6 +92,16 @@ export class StateManager {
   }
 
   handleNetMessage(msg: NetMessage) {
+    if (!isValidNetMessage(msg as unknown)) {
+      if (this.debug.enabled) {
+        const m = msg as unknown as Record<string, unknown> | null;
+        console.debug("[p2play] netMessage rejected", {
+          t: m && typeof m === "object" ? m.t : undefined,
+          from: m && typeof m === "object" ? m.from : undefined,
+        });
+      }
+      return;
+    }
     // Drop old/duplicate messages using per-sender sequence
     if (msg.seq !== undefined) {
       const last = this.lastAppliedSeq.get(msg.from) ?? -1;
@@ -98,13 +110,13 @@ export class StateManager {
     }
     switch (msg.t) {
       case "move": {
-        const accepted = this.resolver.resolveMove(this.state, msg as MoveMessage);
-        if (accepted) this.bus.emit("playerMove", msg.from, (msg as MoveMessage).position);
+        const accepted = this.resolver.resolveMove(this.state, msg);
+        if (accepted) this.bus.emit("playerMove", msg.from, msg.position);
         break;
       }
       case "inventory": {
-        const accepted = this.resolver.resolveInventory(this.state, msg as InventoryUpdateMessage);
-        if (accepted) this.bus.emit("inventoryUpdate", msg.from, (msg as InventoryUpdateMessage).items);
+        const accepted = this.resolver.resolveInventory(this.state, msg);
+        if (accepted) this.bus.emit("inventoryUpdate", msg.from, msg.items);
         break;
       }
       case "transfer": {
@@ -113,16 +125,14 @@ export class StateManager {
         break;
       }
       case "state_full":
-        this.applyFullState(msg as FullStateMessage);
+        this.applyFullState(msg);
         break;
       case "state_delta":
-        this.applyDeltaMessage(msg as DeltaStateMessage);
+        this.applyDeltaMessage(msg);
         break;
-      case "payload": {
-        const m = msg as SharedPayloadMessage;
-        this.bus.emit("sharedPayload", m.from, m.payload, m.channel);
+      case "payload":
+        this.bus.emit("sharedPayload", msg.from, msg.payload, msg.channel);
         break;
-      }
     }
   }
 
@@ -131,10 +141,12 @@ export class StateManager {
     return { tick: ++this.state.tick, changes };
   }
 
-  private getPathValue(path: string): any {
+  private getPathValue(path: string): unknown {
     const segments = path.split(".");
-    let cursor: any = this.state as any;
-    for (const seg of segments) cursor = cursor?.[seg];
+    let cursor: Record<string, unknown> | undefined = this.state as unknown as Record<string, unknown>;
+    for (const seg of segments) {
+      cursor = cursor === undefined ? undefined : (cursor[seg] as Record<string, unknown> | undefined);
+    }
     return structuredClone(cursor);
   }
 }

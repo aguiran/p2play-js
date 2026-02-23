@@ -61,10 +61,10 @@ export class ConflictResolver {
     // Very simple JSON path applier: path form a.b.c with no arrays
     for (const change of delta.changes) {
       const segments = change.path.split(".");
-      let cursor: any = current as any;
+      let cursor: Record<string, unknown> = current as unknown as Record<string, unknown>;
       for (let i = 0; i < segments.length - 1; i++) {
         const seg = segments[i];
-        cursor = cursor[seg] ?? (cursor[seg] = {});
+        cursor = (cursor[seg] ?? (cursor[seg] = {})) as Record<string, unknown>;
       }
       cursor[segments[segments.length - 1]] = structuredClone(change.value);
     }
