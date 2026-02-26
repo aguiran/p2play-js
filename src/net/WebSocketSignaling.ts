@@ -28,15 +28,17 @@ export class WebSocketSignaling implements SignalingAdapter {
   private reconnectAttempt = 0;
   private onDisconnectCb: (() => void) | undefined;
   private onReconnectCb: (() => void) | undefined;
+  private readonly roomToken: string | undefined;
 
   constructor(
     public localId: PlayerId,
     public roomId: string,
     serverUrl: string,
-    options?: { reconnect?: boolean }
+    options?: { reconnect?: boolean; roomToken?: string }
   ) {
     this.serverUrl = serverUrl;
     this.reconnect = options?.reconnect ?? false;
+    this.roomToken = options?.roomToken;
     this.ws = new WebSocket(serverUrl);
     this.isOpen = new Promise((resolve) => {
       this.ws.addEventListener("open", () => resolve());
@@ -124,8 +126,14 @@ export class WebSocketSignaling implements SignalingAdapter {
 
   async register(): Promise<void> {
     await this.isOpen;
-    // Send a lightweight registration message to join room and receive roster
-    this.ws.send(JSON.stringify({ roomId: this.roomId, from: this.localId, announce: true, kind: 'register' }));
+    const payload: Record<string, unknown> = {
+      roomId: this.roomId,
+      from: this.localId,
+      announce: true,
+      kind: 'register',
+    };
+    if (this.roomToken !== undefined) payload.roomToken = this.roomToken;
+    this.ws.send(JSON.stringify(payload));
   }
 
   async announce(localDescription: RTCSessionDescriptionInit, to?: PlayerId): Promise<void> {

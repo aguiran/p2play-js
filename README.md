@@ -281,6 +281,40 @@ const signaling = new WebSocketSignaling("playerA", "room-42", "ws://localhost:8
 
 When enabled, the client will reconnect with exponential backoff (base 1s, max 30s, 0–25% jitter), re-join the room and receive a fresh roster; the library clears peers on disconnect and resyncs state from the host when reconnected. Calling `signaling.close()` (e.g. when the user stops the game) disables any further reconnection. The default is `reconnect: false` so existing apps are unchanged.
 
+**Room token (optional):** When your signaling server requires a room token (`REQUIRE_ROOM_TOKEN=1`), pass it in options so the client sends it on register:
+
+```ts
+const signaling = new WebSocketSignaling("playerA", "room-42", "ws://localhost:8787", {
+  roomToken: "eyJhbGc...", // JWT from your auth backend
+});
+```
+
+#### Signaling security (dev vs prod)
+
+The reference WS server (`examples/server/ws-server.mjs`) supports optional security features via environment variables. **By default, all are off** so dev/demo behavior is unchanged.
+
+| Option | Default | Effect when enabled |
+|--------|--------|----------------------|
+| `ENFORCE_SESSION_IDENTITY=1` | off | Server overwrites `from` with the session identity when relaying; clients cannot spoof another peer’s id. With token auth, identity can be taken from the JWT `sub` claim at register. |
+| `REQUIRE_ROOM_TOKEN=1` | off | Register requires a valid JWT; missing or invalid token is rejected. Requires `ROOM_TOKEN_SECRET` to be set (server exits otherwise). |
+| `STRICT_ENVELOPES=1` | off | Server validates message shape (required fields, allowed `kind`); invalid messages are rejected and the connection is closed. |
+
+**Default (dev):** No token, no strict validation, server trusts client `from` for roster/relay. Suitable for local development and demos.
+
+**Token format (when `REQUIRE_ROOM_TOKEN=1`):** JWT signed with HS256. Expected claims: `sub` (string, player id), optionally `roomId` (string), `exp` (numeric timestamp). Secret is read from `ROOM_TOKEN_SECRET`. Generate the JWT with your auth backend (e.g. `jsonwebtoken` or Node `crypto.createHmac('sha256', secret)`); the server verifies signature and uses `sub` as session identity when `ENFORCE_SESSION_IDENTITY=1`.
+
+**Rejection behavior:** On register or envelope failure the server sends a single message `{ sys: 'error', code: 'auth_required' }` or `{ sys: 'error', code: 'invalid_envelope' }` then closes the connection. The client can handle `close`/error to show a message or attempt reconnection.
+
+**Envelope schema (when `STRICT_ENVELOPES=1`):** Every message must have `roomId` (string) and `kind` in `['register', 'desc', 'ice']`. Register messages must also have `announce` and `from`. Processing order: 1) validate envelope, 2) resolve identity / register, 3) validate token if required.
+
+**Example prod-like config:**
+
+```bash
+ENFORCE_SESSION_IDENTITY=1 REQUIRE_ROOM_TOKEN=1 ROOM_TOKEN_SECRET=your-secret STRICT_ENVELOPES=1 PORT=8787 node examples/server/ws-server.mjs
+```
+
+Client must then pass a valid `roomToken` in `WebSocketSignaling(..., { roomToken })`.
+
 ### Examples
 
 #### Basic WebSocket Test: `examples/basic/index.html`

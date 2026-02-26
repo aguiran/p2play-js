@@ -67,6 +67,17 @@ describe('WebSocketSignaling', () => {
     sig.close();
   });
 
+  it('register includes roomToken in payload when provided', async () => {
+    const sig = new WebSocketSignaling('P1', 'room42', 'ws://fake', { roomToken: 'jwt.here' });
+    const ws = instances[instances.length - 1];
+    ws._open();
+    await sig.register();
+    const msg = JSON.parse(ws.sent[0]);
+    expect(msg.roomToken).toBe('jwt.here');
+    expect(msg.kind).toBe('register');
+    sig.close();
+  });
+
   it('announce sends SDP description', async () => {
     const { sig, ws } = createSignaling();
     await sig.announce({ type: 'offer', sdp: 'test-sdp' }, 'P2');

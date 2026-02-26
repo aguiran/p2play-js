@@ -157,13 +157,13 @@ Validation:
 
 **Objectif:** reduire le spoofing et preparer un usage production plus propre.
 
-- [ ] Lier identite session/socket cote serveur (ne pas faire confiance a `from` entrant).
-- [ ] Ajouter token d'auth room (JWT ou token signe) en option.
-- [ ] Filtrer/valider strictement les envelopes signaling.
+- [x] Lier identite session/socket cote serveur (ne pas faire confiance a `from` entrant).
+- [x] Ajouter token d'auth room (JWT ou token signe) en option.
+- [x] Filtrer/valider strictement les envelopes signaling.
 
 Validation:
-- [ ] Tests d'usurpation d'identite.
-- [ ] Documentation "dev vs prod" explicite.
+- [x] Tests d'usurpation d'identite.
+- [x] Documentation "dev vs prod" explicite.
 
 ---
 
@@ -175,5 +175,7 @@ Utilisation proposee:
 
 ### Journal
 
-- **Lot 8 (reconnexion signaling):** WebSocketSignaling accepte `options?: { reconnect?: boolean }` (defaut false). Methode `setReconnectCallbacks(onDisconnect?, onReconnect?)` pour enregistrer les callbacks. Backoff 1s–30s + jitter. PeerManager.handleSignalingDisconnect() vide les peers a la deconnexion signaling. StateManager.prepareForResync() permet d'accepter le prochain state_full pour le joueur local. GameLib branche les callbacks dans start() par duck typing. Demo complete utilise reconnect: true. Tests unitaires ajoutes (ws-signaling, peermanager.reconnect, state-manager prepareForResync). Validation manuelle coupure/reprise a faire sur la demo.
+- **Lot 9 (PR signaling auth)** : ENFORCE_SESSION_IDENTITY (overwrite `from` au relay), STRICT_ENVELOPES (validation enveloppes, kind autorises), option client `roomToken`, REQUIRE_ROOM_TOKEN (JWT HS256, rejet auth_required/invalid_envelope + fermeture), identite optionnelle depuis token `sub` quand ENFORCE_SESSION_IDENTITY actif. Documentation README « Signaling security (dev vs prod) » et evolution.md mise a jour.
+
+
 
