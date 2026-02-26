@@ -326,6 +326,29 @@ constructor(bus: EventBus, signaling: SignalingAdapter, serializationStrategy: S
     return this.hostId;
   }
 
+  /**
+   * Clear all peers and pending state when signaling connection is lost.
+   * Call this from the signaling layer's onDisconnect callback so that after reconnect
+   * the roster handler can create fresh offers (peers map would otherwise block createOfferTo).
+   */
+  handleSignalingDisconnect(): void {
+    if (this.disposed) return;
+    for (const t of this.pendingTimeouts.values()) clearTimeout(t);
+    this.pendingTimeouts.clear();
+    for (const [pid, info] of [...this.pendingInitiators.entries()]) {
+      try { info.rtc.close(); } catch {}
+      this.pendingInitiators.delete(pid);
+    }
+    for (const [pid, info] of [...this.peers.entries()]) {
+      try { info.rtc.close(); } catch {}
+      this.peers.delete(pid);
+      this.bus.emit("peerLeave", pid);
+    }
+    this.bufferedRemoteIce.clear();
+    this.hostId = undefined;
+    this.electHost();
+  }
+
   private onMessage(from: PlayerId, data: string | ArrayBuffer) {
     if (this.disposed) return;
     if (typeof data === "string") {
@@ -412,7 +435,7 @@ constructor(bus: EventBus, signaling: SignalingAdapter, serializationStrategy: S
         queued++;
       }
     }
-    this.maybeDebug({ type: "broadcast", to: "all", payloadBytes: this.sizeOf(payload), delivered, queued, serialization: this.serializationStrategy, timestamp: performance.now() });
+    this.maybeDebug({ type: "broadcast", to: "all", payloadBytes: this.sizeOf(payload), delivered, queued, channel: kind, serialization: this.serializationStrategy, timestamp: performance.now() });
   }
 
   send(to: PlayerId, message: NetMessage, options?: SendOptions): void {
@@ -429,7 +452,7 @@ constructor(bus: EventBus, signaling: SignalingAdapter, serializationStrategy: S
       this.pushOutbox(peer, payload, message, kind);
       queued = 1;
     }
-    this.maybeDebug({ type: "send", to, payloadBytes: this.sizeOf(payload), delivered, queued, serialization: this.serializationStrategy, timestamp: performance.now() });
+    this.maybeDebug({ type: "send", to, payloadBytes: this.sizeOf(payload), delivered, queued, channel: kind, serialization: this.serializationStrategy, timestamp: performance.now() });
   }
 
   private trySend(dc: RTCDataChannel | undefined, payload: string | ArrayBuffer, applyBackpressure: boolean): boolean {

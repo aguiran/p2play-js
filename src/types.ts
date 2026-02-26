@@ -25,6 +25,7 @@ export interface SendDebugInfo {
   payloadBytes: number;
   delivered: number;
   queued: number;
+  channel: "reliable" | "unreliable";
   serialization: SerializationStrategy;
   timestamp: number;
 }

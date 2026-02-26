@@ -41,7 +41,7 @@ const multiplayer = new P2PGameLibrary({
   // debug: {
   //   enabled: true,
   //   onSend(info) {
-  //     console.log('[send]', info.type, 'to', info.to, 'bytes=', info.payloadBytes, 'delivered=', info.delivered, 'queued=', info.queued);
+  //     console.log('[send]', info.type, 'to', info.to, 'channel=', info.channel, 'bytes=', info.payloadBytes, 'delivered=', info.delivered, 'queued=', info.queued);
   //   }
   // },
   // movement: {
@@ -272,6 +272,14 @@ Ordering & deduplication
 ### WebSocket signaling
 
 Use `WebSocketSignaling(localId, roomId, serverUrl)` to relay offers/answers/ICE via a minimal WS server.
+
+**Automatic reconnection (opt-in):** Pass `{ reconnect: true }` as a fourth argument to enable reconnection after a network drop:
+
+```ts
+const signaling = new WebSocketSignaling("playerA", "room-42", "ws://localhost:8787", { reconnect: true });
+```
+
+When enabled, the client will reconnect with exponential backoff (base 1s, max 30s, 0–25% jitter), re-join the room and receive a fresh roster; the library clears peers on disconnect and resyncs state from the host when reconnected. Calling `signaling.close()` (e.g. when the user stops the game) disables any further reconnection. The default is `reconnect: false` so existing apps are unchanged.
 
 ### Examples
 

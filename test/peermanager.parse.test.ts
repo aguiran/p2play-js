@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach } from 'vitest';
+import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { EventBus } from '../src/events/EventBus';
 import { PeerManager } from '../src/net/PeerManager';
 import { installFakeRTC, createMockSignaling } from './helpers/fakes';
@@ -58,6 +58,54 @@ describe('PeerManager parse robustness', () => {
     (pm as any).onMessage('B', new ArrayBuffer(4));
 
     expect(netMessageCount).toBe(0);
+  });
+});
+
+describe('PeerManager parse with debug enabled', () => {
+  beforeEach(() => {
+    installFakeRTC({ initialConnectionState: 'connected' });
+  });
+
+  it('logs debug on invalid JSON when debug.enabled', async () => {
+    const spy = vi.spyOn(console, 'debug').mockImplementation(() => {});
+    const bus = new EventBus();
+    const signaling = createMockSignaling('A');
+    const pm = new PeerManager(bus, signaling as any, 'json', undefined, { enabled: true });
+    await pm.createOrJoin();
+    (signaling as any).__triggerRoster(['A', 'B']);
+    (signaling as any).__triggerDesc({ type: 'answer', sdp: '' }, 'B');
+
+    (pm as any).onMessage('B', 'not json');
+    expect(spy).toHaveBeenCalledWith(expect.stringContaining('parse dropped'));
+    spy.mockRestore();
+  });
+
+  it('logs debug on non-object JSON when debug.enabled', async () => {
+    const spy = vi.spyOn(console, 'debug').mockImplementation(() => {});
+    const bus = new EventBus();
+    const signaling = createMockSignaling('A');
+    const pm = new PeerManager(bus, signaling as any, 'json', undefined, { enabled: true });
+    await pm.createOrJoin();
+    (signaling as any).__triggerRoster(['A', 'B']);
+    (signaling as any).__triggerDesc({ type: 'answer', sdp: '' }, 'B');
+
+    (pm as any).onMessage('B', '"string"');
+    expect(spy).toHaveBeenCalledWith(expect.stringContaining('not an object'));
+    spy.mockRestore();
+  });
+
+  it('logs debug on invalid binary frame when debug.enabled', async () => {
+    const spy = vi.spyOn(console, 'debug').mockImplementation(() => {});
+    const bus = new EventBus();
+    const signaling = createMockSignaling('A');
+    const pm = new PeerManager(bus, signaling as any, 'binary-min', undefined, { enabled: true });
+    await pm.createOrJoin();
+    (signaling as any).__triggerRoster(['A', 'B']);
+    (signaling as any).__triggerDesc({ type: 'answer', sdp: '' }, 'B');
+
+    (pm as any).onMessage('B', new ArrayBuffer(2));
+    expect(spy).toHaveBeenCalledWith(expect.stringContaining('invalid binary'));
+    spy.mockRestore();
   });
 });
 

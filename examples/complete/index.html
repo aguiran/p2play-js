@@ -146,7 +146,7 @@
           maxPlayers: 8,
           conflictResolution: conf,
           pingOverlay: { enabled: true, position: 'top-right', canvas: null },
-          signaling: new WebSocketSignaling(id, roomId, signalingUrl),
+          signaling: new WebSocketSignaling(id, roomId, signalingUrl, { reconnect: true }),
           authoritativeClientId: undefined,
           roomId,
           debug: {

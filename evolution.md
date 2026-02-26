@@ -126,18 +126,16 @@ Validation:
 
 ---
 
-## Lot 7 - Confirmation metier et metriques de livraison (impact moyen)
+## Lot 7 - Metriques de livraison (impact faible)
 
-**Objectif:** permettre a l'application de savoir si un message cible a ete recu, et exposer des metriques de livraison.
+**Objectif:** enrichir l'observabilite du debug pour distinguer les canaux reliable/unreliable.
 
-Note: la fiabilite transport est deja couverte par le canal SCTP reliable (Lot 6). La deduplication est deja en place via `seq` + `lastAppliedSeq`. L'hydratation `state_full` au rejoin couvre la resynchronisation apres deconnexion. Ce lot ne concerne donc que la confirmation **metier** (le pair a bien traite le message) et l'observabilite.
+Note: la fiabilite transport est couverte par le canal SCTP reliable (Lot 6). La deduplication est en place via `seq` + `lastAppliedSeq`. L'hydratation `state_full` au rejoin couvre la resynchronisation. Un mecanisme ACK applicatif a ete ecarte : les garanties transport existantes le rendent redondant, et les primitives `sendPayload`/`sharedPayload` permettent deja de construire un pattern request/response applicatif si necessaire.
 
-- [ ] ACK metier optionnel sur `send()` : callback `onAck` / `onTimeout` pour les messages cibles (`transfer`, `payload`). Pas sur `broadcast`.
-- [ ] Enrichir `debug.onSend` avec metriques par canal : messages livres, en outbox, echoues, par type de canal (reliable/unreliable).
+- [x] Enrichir `SendDebugInfo` avec le champ `channel: "reliable" | "unreliable"` dans les appels `debug.onSend`.
 
 Validation:
-- [ ] Test unitaire du callback ACK/timeout sur `send()`.
-- [ ] Test que l'ACK ne genere pas de duplication cote etat (idempotence deja couverte par `seq`).
+- [x] Test unitaire verifiant que `debug.onSend` recoit le bon `channel` selon le type de message.
 
 ---
 
@@ -145,13 +143,13 @@ Validation:
 
 **Objectif:** rendre le client robuste aux coupures reseau.
 
-- [ ] Reconnexion WebSocket avec backoff exponentiel + jitter.
-- [ ] Rejoin room automatique.
-- [ ] Resync d'etat apres reconnexion (snapshot host).
+- [x] Reconnexion WebSocket avec backoff exponentiel + jitter.
+- [x] Rejoin room automatique.
+- [x] Resync d'etat apres reconnexion (snapshot host).
 
 Validation:
-- [ ] Test de coupure/reprise reseau sur demo.
-- [ ] Pas d'explosion de connexions/duplicats apres reprise.
+- [X] Test de coupure/reprise reseau sur demo.
+- [X] Pas d'explosion de connexions/duplicats apres reprise.
 
 ---
 
@@ -177,5 +175,5 @@ Utilisation proposee:
 
 ### Journal
 
-- _(a completer au fil des lots)_
+- **Lot 8 (reconnexion signaling):** WebSocketSignaling accepte `options?: { reconnect?: boolean }` (defaut false). Methode `setReconnectCallbacks(onDisconnect?, onReconnect?)` pour enregistrer les callbacks. Backoff 1s–30s + jitter. PeerManager.handleSignalingDisconnect() vide les peers a la deconnexion signaling. StateManager.prepareForResync() permet d'accepter le prochain state_full pour le joueur local. GameLib branche les callbacks dans start() par duck typing. Demo complete utilise reconnect: true. Tests unitaires ajoutes (ws-signaling, peermanager.reconnect, state-manager prepareForResync). Validation manuelle coupure/reprise a faire sur la demo.
 

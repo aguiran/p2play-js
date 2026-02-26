@@ -24,6 +24,33 @@ describe('MovementSystem more branches', () => {
     expect(state.players.A.position.x).toBe(50);
   });
 
+  it('resolves 2D collision without z coordinate', () => {
+    const bus = new EventBus();
+    const state = {
+      players: {
+        A: { id: 'A', position: { x: 0, y: 0 } },
+        B: { id: 'B', position: { x: 0.5, y: 0 } }
+      }, inventories: {}, objects: {}, tick: 0
+    } as any;
+    const ms = new MovementSystem(bus, () => state, { playerRadius: 5 });
+    ms.resolveCollisions();
+    const dist = Math.abs(state.players.B.position.x - state.players.A.position.x);
+    expect(dist).toBeGreaterThanOrEqual(10 - 0.01);
+  });
+
+  it('does not extrapolate when allowedDtSec is zero', () => {
+    const bus = new EventBus();
+    const state = {
+      players: { A: { id: 'A', position: { x: 5, y: 5 }, velocity: { x: 100, y: 0 } } },
+      inventories: {}, objects: {}, tick: 0
+    } as any;
+    const ms = new MovementSystem(bus, () => state, { smoothing: 1, extrapolationMs: 0 });
+    bus.emit('playerMove', 'A');
+    const t = performance.now();
+    ms.interpolate(t + 1000);
+    expect(state.players.A.position.x).toBe(5);
+  });
+
   it('integrates Z and resolves simple 3D collisions', () => {
     const bus = new EventBus();
     const state = { players: { A: { id: 'A', position: { x: 0, y: 0, z: 0 }, velocity: { x: 10000, y: 0, z: 10000 } }, B: { id: 'B', position: { x: 1, y: 0, z: 0 } } }, inventories: {}, objects: {}, tick: 0 } as any;

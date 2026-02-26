@@ -10,6 +10,10 @@ type SignalEnvelope = {
   announce?: boolean;
 };
 
+const RECONNECT_BASE_MS = 1000;
+const RECONNECT_MAX_MS = 30_000;
+const RECONNECT_JITTER = 0.25;
+
 export class WebSocketSignaling implements SignalingAdapter {
   public ws: WebSocket;
   private _wired = false;
@@ -17,13 +21,81 @@ export class WebSocketSignaling implements SignalingAdapter {
   private iceHandlers: Array<(candidate: RTCIceCandidateInit, from: PlayerId) => void> = [];
   private rosterHandlers: Array<(roster: PlayerId[]) => void> = [];
   private isOpen!: Promise<void>;
+  private readonly serverUrl: string;
+  private readonly reconnect: boolean;
+  private closedIntentionally = false;
+  private reconnectTimeoutId: ReturnType<typeof setTimeout> | undefined;
+  private reconnectAttempt = 0;
+  private onDisconnectCb: (() => void) | undefined;
+  private onReconnectCb: (() => void) | undefined;
 
-  constructor(public localId: PlayerId, public roomId: string, serverUrl: string) {
+  constructor(
+    public localId: PlayerId,
+    public roomId: string,
+    serverUrl: string,
+    options?: { reconnect?: boolean }
+  ) {
+    this.serverUrl = serverUrl;
+    this.reconnect = options?.reconnect ?? false;
     this.ws = new WebSocket(serverUrl);
     this.isOpen = new Promise((resolve) => {
       this.ws.addEventListener("open", () => resolve());
     });
     this.ensureWired();
+    this.ws.addEventListener("close", () => this.handleClose());
+    this.ws.addEventListener("error", () => this.handleClose());
+  }
+
+  setReconnectCallbacks(onDisconnect?: () => void, onReconnect?: () => void): void {
+    this.onDisconnectCb = onDisconnect;
+    this.onReconnectCb = onReconnect;
+  }
+
+  get isReconnecting(): boolean {
+    return this.reconnectTimeoutId !== undefined;
+  }
+
+  private handleClose(): void {
+    if (this.closedIntentionally || !this.reconnect) return;
+    this.onDisconnectCb?.();
+    this.scheduleReconnect();
+  }
+
+  private scheduleReconnect(): void {
+    if (this.closedIntentionally || this.reconnectTimeoutId !== undefined) return;
+    const delay = Math.min(
+      RECONNECT_MAX_MS,
+      RECONNECT_BASE_MS * Math.pow(2, this.reconnectAttempt)
+    );
+    const jitter = 1 + Math.random() * RECONNECT_JITTER;
+    const ms = Math.round(delay * jitter);
+    this.reconnectAttempt++;
+    this.reconnectTimeoutId = setTimeout(() => {
+      this.reconnectTimeoutId = undefined;
+      this.doReconnect();
+    }, ms);
+  }
+
+  private doReconnect(): void {
+    if (this.closedIntentionally) return;
+    this.ws = new WebSocket(this.serverUrl);
+    this.isOpen = new Promise((resolve) => {
+      this.ws.addEventListener("open", () => {
+        if (this.closedIntentionally) {
+          resolve();
+          return;
+        }
+        this.reconnectAttempt = 0;
+        this._wired = false;
+        this.ensureWired();
+        this.register().then(() => {
+          if (!this.closedIntentionally) this.onReconnectCb?.();
+        });
+        resolve();
+      });
+    });
+    this.ws.addEventListener("close", () => this.handleClose());
+    this.ws.addEventListener("error", () => this.handleClose());
   }
 
   private ensureWired() {
@@ -99,6 +171,11 @@ export class WebSocketSignaling implements SignalingAdapter {
   }
 
   close(): void {
+    this.closedIntentionally = true;
+    if (this.reconnectTimeoutId !== undefined) {
+      clearTimeout(this.reconnectTimeoutId);
+      this.reconnectTimeoutId = undefined;
+    }
     this.descHandlers.length = 0;
     this.iceHandlers.length = 0;
     this.rosterHandlers.length = 0;

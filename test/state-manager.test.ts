@@ -29,4 +29,101 @@ describe('StateManager', () => {
   });
 });
 
+describe('StateManager authoritative rejection', () => {
+  it('rejects move from non-authoritative sender', () => {
+    const bus = new EventBus();
+    let moveFired = false;
+    const sm = new StateManager(bus, 'authoritative', () => 'HOST', () => [], () => 'LOCAL');
+    bus.on('playerMove', () => { moveFired = true; });
+    sm.handleNetMessage({ t: 'move', from: 'RANDO', ts: 1, seq: 1, position: { x: 1, y: 2 } } as any);
+    expect(moveFired).toBe(false);
+  });
+
+  it('rejects inventory from non-authoritative sender', () => {
+    const bus = new EventBus();
+    let invFired = false;
+    const sm = new StateManager(bus, 'authoritative', () => 'HOST', () => [], () => 'LOCAL');
+    bus.on('inventoryUpdate', () => { invFired = true; });
+    sm.handleNetMessage({ t: 'inventory', from: 'RANDO', ts: 1, seq: 1, items: [] } as any);
+    expect(invFired).toBe(false);
+  });
+
+  it('rejects transfer from non-authoritative sender', () => {
+    const bus = new EventBus();
+    let trFired = false;
+    const sm = new StateManager(bus, 'authoritative', () => 'HOST', () => [], () => 'LOCAL');
+    bus.on('objectTransfer', () => { trFired = true; });
+    sm.getState().inventories['RANDO'] = [{ id: 'p', type: 't', quantity: 5 }];
+    sm.handleNetMessage({ t: 'transfer', from: 'RANDO', to: 'B', ts: 1, seq: 1, item: { id: 'p', type: 't', quantity: 1 } } as any);
+    expect(trFired).toBe(false);
+  });
+});
+
+describe('StateManager buildDeltaFromPaths', () => {
+  it('returns undefined for nonexistent path', () => {
+    const sm = makeStateManager();
+    const delta = sm.buildDeltaFromPaths(['nonexistent.deep.path']);
+    expect(delta.changes[0].value).toBeUndefined();
+  });
+});
+
+describe('StateManager applyFullState with inventories', () => {
+  it('merges remote player inventories', () => {
+    const sm = makeStateManager();
+    const full: NetMessage = {
+      t: 'state_full', from: 'H', ts: 1,
+      state: {
+        players: { R: { id: 'R', position: { x: 1, y: 1 } } },
+        inventories: { R: [{ id: 'sword', type: 'weapon', quantity: 1 }] },
+        objects: {}, tick: 0
+      }
+    } as any;
+    sm.handleNetMessage(full);
+    expect(sm.getState().inventories['R']).toEqual([{ id: 'sword', type: 'weapon', quantity: 1 }]);
+  });
+});
+
+describe('StateManager prepareForResync', () => {
+  it('after prepareForResync, next state_full updates local player', () => {
+    const bus = new EventBus();
+    const sm = new StateManager(bus, 'timestamp', () => undefined, () => [], () => 'LOCAL');
+    // Set initial local state
+    sm.handleNetMessage({
+      t: 'state_full', from: 'H', ts: 1,
+      state: {
+        players: { LOCAL: { id: 'LOCAL', position: { x: 10, y: 10 } } },
+        inventories: {},
+        objects: {},
+        tick: 0
+      }
+    } as any);
+    expect(sm.getState().players['LOCAL'].position).toEqual({ x: 10, y: 10 });
+    // Apply a move from LOCAL so lastAppliedSeq has LOCAL
+    sm.handleNetMessage({ t: 'move', from: 'LOCAL', ts: 2, seq: 1, position: { x: 20, y: 20 } } as any);
+    // Host sends state_full with LOCAL at (5,5) - normally we skip local overwrite
+    sm.handleNetMessage({
+      t: 'state_full', from: 'H', ts: 3,
+      state: {
+        players: { LOCAL: { id: 'LOCAL', position: { x: 5, y: 5 } } },
+        inventories: {},
+        objects: {},
+        tick: 1
+      }
+    } as any);
+    expect(sm.getState().players['LOCAL'].position).toEqual({ x: 20, y: 20 }); // unchanged
+    // Reconnect: prepare for resync
+    sm.prepareForResync();
+    // Next state_full should overwrite local
+    sm.handleNetMessage({
+      t: 'state_full', from: 'H', ts: 4,
+      state: {
+        players: { LOCAL: { id: 'LOCAL', position: { x: 99, y: 99 } } },
+        inventories: {},
+        objects: {},
+        tick: 2
+      }
+    } as any);
+    expect(sm.getState().players['LOCAL'].position).toEqual({ x: 99, y: 99 });
+  });
+});
 

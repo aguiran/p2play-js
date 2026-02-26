@@ -18,6 +18,12 @@ describe('serialization', () => {
     const dec = s.decode(enc as ArrayBuffer);
     expect(dec).toEqual(sample);
   });
+  it('binary-min decode accepts string input', () => {
+    const s = createSerializer('binary-min');
+    const json = JSON.stringify(sample);
+    const dec = s.decode(json);
+    expect(dec).toEqual(sample);
+  });
   it('throws on unknown strategy', () => {
     // @ts-expect-error: testing invalid strategy
     expect(() => createSerializer('unknown')).toThrowError();

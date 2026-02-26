@@ -54,6 +54,12 @@ describe('isValidNetMessage', () => {
   it('rejects transfer with item missing quantity', () => {
     expect(isValidNetMessage({ t: 'transfer', from: 'A', ts: 1, to: 'B', item: { id: 'i1', type: 't' } })).toBe(false);
   });
+  it('rejects transfer without to field', () => {
+    expect(isValidNetMessage({ t: 'transfer', from: 'A', ts: 1, item: { id: 'i1', type: 't', quantity: 1 } })).toBe(false);
+  });
+  it('rejects transfer with null item', () => {
+    expect(isValidNetMessage({ t: 'transfer', from: 'A', ts: 1, to: 'B', item: null })).toBe(false);
+  });
 });
 
 describe('StateManager handleNetMessage with invalid messages', () => {
@@ -88,10 +94,11 @@ describe('StateManager debug mode traces rejected messages', () => {
 
     sm.handleNetMessage({} as any);
     sm.handleNetMessage({ t: 'move', from: 'A' } as any);
+    sm.handleNetMessage(null as any);
+    sm.handleNetMessage(42 as any);
 
-    expect(spy).toHaveBeenCalledTimes(2);
+    expect(spy).toHaveBeenCalledTimes(4);
     expect(spy.mock.calls[0][0]).toContain('netMessage rejected');
-    expect(spy.mock.calls[1][0]).toContain('netMessage rejected');
     spy.mockRestore();
   });
 

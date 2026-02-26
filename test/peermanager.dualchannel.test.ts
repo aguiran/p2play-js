@@ -362,6 +362,165 @@ describe('PeerManager dual-channel: pong sent via unreliable', () => {
   });
 });
 
+describe('PeerManager dual-channel: SendDebugInfo includes channel', () => {
+  beforeEach(() => {
+    installFakeRTC({ initialConnectionState: 'connected', connectOnSetLocalDescription: false });
+  });
+
+  it('debug.onSend receives channel "unreliable" for move messages', async () => {
+    const debugInfos: any[] = [];
+    const bus = new EventBus();
+    const signaling = createMockSignaling('A');
+    const pm = new PeerManager(bus, signaling as any, 'json', undefined, { enabled: true, onSend: (info) => debugInfos.push(info) });
+    await pm.createOrJoin();
+    (signaling as any).__triggerRoster(['A', 'B']);
+    (signaling as any).__triggerDesc({ type: 'answer', sdp: '' }, 'B');
+
+    const msg: NetMessage = { t: 'move', from: 'A', ts: 1, position: { x: 1, y: 2 }, seq: 1 } as any;
+    pm.broadcast(msg);
+
+    expect(debugInfos.length).toBe(1);
+    expect(debugInfos[0].channel).toBe('unreliable');
+  });
+
+  it('debug.onSend receives channel "reliable" for inventory messages', async () => {
+    const debugInfos: any[] = [];
+    const bus = new EventBus();
+    const signaling = createMockSignaling('A');
+    const pm = new PeerManager(bus, signaling as any, 'json', undefined, { enabled: true, onSend: (info) => debugInfos.push(info) });
+    await pm.createOrJoin();
+    (signaling as any).__triggerRoster(['A', 'B']);
+    (signaling as any).__triggerDesc({ type: 'answer', sdp: '' }, 'B');
+
+    const msg: NetMessage = { t: 'inventory', from: 'A', ts: 1, items: [], seq: 1 } as any;
+    pm.broadcast(msg);
+
+    expect(debugInfos.length).toBe(1);
+    expect(debugInfos[0].channel).toBe('reliable');
+  });
+
+  it('debug.onSend receives channel for send() calls', async () => {
+    const debugInfos: any[] = [];
+    const bus = new EventBus();
+    const signaling = createMockSignaling('A');
+    const pm = new PeerManager(bus, signaling as any, 'json', undefined, { enabled: true, onSend: (info) => debugInfos.push(info) });
+    await pm.createOrJoin();
+    (signaling as any).__triggerRoster(['A', 'B']);
+    (signaling as any).__triggerDesc({ type: 'answer', sdp: '' }, 'B');
+
+    const msg: NetMessage = { t: 'payload', from: 'A', ts: 1, payload: {}, seq: 1 } as any;
+    pm.send('B', msg);
+
+    expect(debugInfos.length).toBe(1);
+    expect(debugInfos[0].channel).toBe('reliable');
+    expect(debugInfos[0].type).toBe('send');
+  });
+});
+
+describe('PeerManager outbox flush with binary payload', () => {
+  beforeEach(() => {
+    installFakeRTC({ initialConnectionState: 'connected', connectOnSetLocalDescription: false });
+  });
+
+  it('flushes outbox with ArrayBuffer payloads when channel opens', async () => {
+    const bus = new EventBus();
+    const signaling = createMockSignaling('A');
+    const pm = new PeerManager(bus, signaling as any, 'binary-min');
+    await pm.createOrJoin();
+    (signaling as any).__triggerRoster(['A', 'B']);
+    (signaling as any).__triggerDesc({ type: 'answer', sdp: '' }, 'B');
+
+    const peer = (pm as any).peers.get('B');
+    const dcU = peer.dcUnreliable as FakeDataChannel;
+    dcU.readyState = 'closed';
+    dcU.sent = [];
+
+    const msg: NetMessage = { t: 'move', from: 'A', ts: 1, position: { x: 1, y: 2 }, seq: 1 } as any;
+    pm.broadcast(msg);
+    expect(peer.outboxUnreliable?.length).toBe(1);
+
+    dcU.readyState = 'open';
+    dcU.onopen?.();
+    expect(dcU.sent.length).toBe(1);
+    expect(dcU.sent[0] instanceof ArrayBuffer).toBe(true);
+  });
+});
+
+describe('PeerManager pong handling and binary decode', () => {
+  beforeEach(() => {
+    installFakeRTC({ initialConnectionState: 'connected', connectOnSetLocalDescription: false });
+  });
+
+  it('processes pong message and updates peer ping', async () => {
+    const bus = new EventBus();
+    const signaling = createMockSignaling('A');
+    const pm = new PeerManager(bus, signaling as any);
+    await pm.createOrJoin();
+    (signaling as any).__triggerRoster(['A', 'B']);
+    (signaling as any).__triggerDesc({ type: 'answer', sdp: '' }, 'B');
+
+    const peer = pm.getPeer('B')!;
+    const pings: number[] = [];
+    bus.on('ping', (_id: string, rtt: number) => pings.push(rtt));
+
+    const ts = performance.now() - 50;
+    const pongMsg = JSON.stringify({ t: 'pong', ts });
+    (peer.dcUnreliable as any).onmessage?.({ data: pongMsg });
+
+    expect(peer.pingMs).toBeGreaterThan(0);
+    expect(peer.lastPongTs).toBeGreaterThan(0);
+    expect(pings.length).toBe(1);
+  });
+
+  it('decodes binary ArrayBuffer message via serializer', async () => {
+    const bus = new EventBus();
+    const signaling = createMockSignaling('A');
+    const pm = new PeerManager(bus, signaling as any, 'binary-min');
+    await pm.createOrJoin();
+    (signaling as any).__triggerRoster(['A', 'B']);
+    (signaling as any).__triggerDesc({ type: 'answer', sdp: '' }, 'B');
+
+    const received: any[] = [];
+    bus.on('netMessage', (msg: any) => received.push(msg));
+
+    const { createSerializer } = await import('../src/net/serialization');
+    const ser = createSerializer('binary-min');
+    const encoded = ser.encode({ t: 'move', from: 'B', ts: 1, seq: 1, position: { x: 5, y: 10 } } as any);
+
+    const peer = pm.getPeer('B')!;
+    (peer.dcUnreliable as any).onmessage?.({ data: encoded });
+
+    expect(received.length).toBe(1);
+    expect(received[0].t).toBe('move');
+    expect(received[0].from).toBe('B');
+  });
+});
+
+describe('PeerManager binary serialization paths', () => {
+  beforeEach(() => {
+    installFakeRTC({ initialConnectionState: 'connected', connectOnSetLocalDescription: false });
+  });
+
+  it('broadcast with binary-min sends ArrayBuffer and computes size correctly', async () => {
+    const debugInfos: any[] = [];
+    const bus = new EventBus();
+    const signaling = createMockSignaling('A');
+    const pm = new PeerManager(bus, signaling as any, 'binary-min', undefined, { enabled: true, onSend: (info) => debugInfos.push(info) });
+    await pm.createOrJoin();
+    (signaling as any).__triggerRoster(['A', 'B']);
+    (signaling as any).__triggerDesc({ type: 'answer', sdp: '' }, 'B');
+
+    const msg: NetMessage = { t: 'move', from: 'A', ts: 1, seq: 1, position: { x: 1, y: 2 } } as any;
+    pm.broadcast(msg);
+
+    const peer = (pm as any).peers.get('B');
+    const dcU = peer.dcUnreliable as FakeDataChannel;
+    const lastSent = dcU.sent[dcU.sent.length - 1];
+    expect(lastSent instanceof ArrayBuffer).toBe(true);
+    expect(debugInfos[0].payloadBytes).toBeGreaterThan(0);
+  });
+});
+
 describe('PeerManager createOfferTo creates both channels', () => {
   beforeEach(() => {
     installFakeRTC({ connectOnSetLocalDescription: false });

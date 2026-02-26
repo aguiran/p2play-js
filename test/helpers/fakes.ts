@@ -27,6 +27,8 @@ export class FakeRTCPeerConnection {
   ondatachannel: ((ev: { channel: FakeDataChannel }) => void) | null = null;
   connectionState: RTCPeerConnectionState;
   signalingState: RTCSignalingState = 'stable';
+  remoteDescription: RTCSessionDescriptionInit | null = null;
+  addedIceCandidates: RTCIceCandidateInit[] = [];
   private _channels = new Map<string, FakeDataChannel>();
   private connectOnSetLocal: boolean;
 
@@ -57,11 +59,12 @@ export class FakeRTCPeerConnection {
   }
 
   async setRemoteDescription(desc: RTCSessionDescriptionInit): Promise<void> {
+    this.remoteDescription = desc;
     if (desc.type === 'answer') this.signalingState = 'stable';
   }
 
   async createAnswer(): Promise<RTCSessionDescriptionInit> { return { type: 'answer', sdp: '' }; }
-  async addIceCandidate(_: RTCIceCandidateInit): Promise<void> {}
+  async addIceCandidate(c: RTCIceCandidateInit): Promise<void> { this.addedIceCandidates.push(c); }
   close() {}
 }
 
@@ -86,7 +89,7 @@ export function createMockSignaling(localId: string) {
 }
 
 export function installFakeRTC(opts?: FakeRTCOptions) {
-  (globalThis as Record<string, unknown>).window = (globalThis as Record<string, unknown>).window ?? {
+  (globalThis as Record<string, unknown>).window = {
     setInterval: globalThis.setInterval?.bind(globalThis),
     clearInterval: globalThis.clearInterval?.bind(globalThis),
   };

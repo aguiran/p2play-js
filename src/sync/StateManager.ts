@@ -45,6 +45,15 @@ export class StateManager {
   }
 
   /**
+   * Clear local sequence so the next state_full received will be applied for the local player too.
+   * Call this when reconnecting so the host snapshot is accepted as a full resync.
+   */
+  prepareForResync(): void {
+    const localId = this.getLocalId();
+    if (localId !== undefined) this.lastAppliedSeq.delete(localId);
+  }
+
+  /**
    * Apply a set of path-based changes to the local state without emitting network traffic.
    * Use together with broadcastDelta(paths) to propagate to peers.
    */

@@ -28,11 +28,13 @@ export class P2PGameLibrary {
   private readonly overlay: PingOverlay;
   private readonly movement: MovementSystem;
   private readonly localId: PlayerId;
+  private readonly signaling: SignalingAdapter;
   private readonly options: Required<Pick<GameLibOptions, "conflictResolution" | "maxPlayers">> & GameLibOptions;
   private readonly unsubs: Array<() => void> = [];
   private disposed = false;
 
   constructor(options: GameLibOptions & { signaling: SignalingAdapter }) {
+    this.signaling = options.signaling;
     this.options = {
       maxPlayers: options.maxPlayers ?? 4,
       conflictResolution: options.conflictResolution ?? "timestamp",
@@ -116,7 +118,7 @@ export class P2PGameLibrary {
     this.disposed = true;
     for (const u of this.unsubs) u();
     this.peers.dispose();
-    (this.options as GameLibOptions & { signaling: SignalingAdapter }).signaling?.close?.();
+    this.signaling?.close?.();
     this.overlay.dispose();
     this.movement.dispose();
     this.bus.clear();
@@ -125,6 +127,13 @@ export class P2PGameLibrary {
   async start(): Promise<void> {
     if (this.disposed) throw new Error("P2PGameLibrary has been disposed");
     await this.peers.createOrJoin();
+    const sig = this.signaling as { setReconnectCallbacks?: (onDisconnect: () => void, onReconnect: () => void) => void };
+    if (typeof sig.setReconnectCallbacks === "function") {
+      sig.setReconnectCallbacks(
+        () => this.peers.handleSignalingDisconnect(),
+        () => this.state.prepareForResync()
+      );
+    }
   }
 
   on<N extends EventName>(name: N, fn: EventHandlerMap[N]): () => void {
