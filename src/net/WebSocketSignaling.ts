@@ -1,4 +1,5 @@
 import { PlayerId } from "../types";
+import { RECONNECT_BASE_MS, RECONNECT_MAX_MS } from "../defaults";
 import { SignalingAdapter } from "./PeerManager";
 
 type SignalEnvelope = {
@@ -10,36 +11,128 @@ type SignalEnvelope = {
   announce?: boolean;
 };
 
+const RECONNECT_JITTER = 0.25;
+
 export class WebSocketSignaling implements SignalingAdapter {
   public ws: WebSocket;
+  private _wired = false;
   private descHandlers: Array<(desc: RTCSessionDescriptionInit, from: PlayerId) => void> = [];
   private iceHandlers: Array<(candidate: RTCIceCandidateInit, from: PlayerId) => void> = [];
   private rosterHandlers: Array<(roster: PlayerId[]) => void> = [];
   private isOpen!: Promise<void>;
+  private readonly serverUrl: string;
+  private readonly reconnect: boolean;
+  private closedIntentionally = false;
+  private reconnectTimeoutId: ReturnType<typeof setTimeout> | undefined;
+  private reconnectAttempt = 0;
+  private onDisconnectCb: (() => void) | undefined;
+  private onReconnectCb: (() => void) | undefined;
+  private readonly roomToken: string | undefined;
+  private readonly onError: ((code: string) => void) | undefined;
+  private readonly reconnectBaseMs: number;
+  private readonly reconnectMaxMs: number;
 
-  constructor(public localId: PlayerId, public roomId: string, serverUrl: string) {
+  constructor(
+    public localId: PlayerId,
+    public roomId: string,
+    serverUrl: string,
+    options?: {
+      reconnect?: boolean;
+      roomToken?: string;
+      onError?: (code: string) => void;
+      /** Backoff for reconnection: baseMs (default 1000), maxMs (default 30000). Use positive values. */
+      reconnectOptions?: { baseMs?: number; maxMs?: number };
+    }
+  ) {
+    this.serverUrl = serverUrl;
+    this.reconnect = options?.reconnect ?? false;
+    this.roomToken = options?.roomToken;
+    this.onError = options?.onError;
+    this.reconnectBaseMs = options?.reconnectOptions?.baseMs ?? RECONNECT_BASE_MS;
+    this.reconnectMaxMs = options?.reconnectOptions?.maxMs ?? RECONNECT_MAX_MS;
     this.ws = new WebSocket(serverUrl);
     this.isOpen = new Promise((resolve) => {
       this.ws.addEventListener("open", () => resolve());
     });
     this.ensureWired();
+    this.ws.addEventListener("close", () => this.handleClose());
+    this.ws.addEventListener("error", () => this.handleClose());
+  }
+
+  setReconnectCallbacks(onDisconnect?: () => void, onReconnect?: () => void): void {
+    this.onDisconnectCb = onDisconnect;
+    this.onReconnectCb = onReconnect;
+  }
+
+  get isReconnecting(): boolean {
+    return this.reconnectTimeoutId !== undefined;
+  }
+
+  private handleClose(): void {
+    if (this.closedIntentionally || !this.reconnect) return;
+    this.onDisconnectCb?.();
+    this.scheduleReconnect();
+  }
+
+  private scheduleReconnect(): void {
+    if (this.closedIntentionally || this.reconnectTimeoutId !== undefined) return;
+    const delay = Math.min(
+      this.reconnectMaxMs,
+      this.reconnectBaseMs * Math.pow(2, this.reconnectAttempt)
+    );
+    const jitter = 1 + Math.random() * RECONNECT_JITTER;
+    const ms = Math.round(delay * jitter);
+    this.reconnectAttempt++;
+    this.reconnectTimeoutId = setTimeout(() => {
+      this.reconnectTimeoutId = undefined;
+      this.doReconnect();
+    }, ms);
+  }
+
+  private doReconnect(): void {
+    if (this.closedIntentionally) return;
+    this.ws = new WebSocket(this.serverUrl);
+    this.isOpen = new Promise((resolve) => {
+      this.ws.addEventListener("open", () => {
+        if (this.closedIntentionally) {
+          resolve();
+          return;
+        }
+        this.reconnectAttempt = 0;
+        this._wired = false;
+        this.ensureWired();
+        this.register().then(() => {
+          if (!this.closedIntentionally) this.onReconnectCb?.();
+        });
+        resolve();
+      });
+    });
+    this.ws.addEventListener("close", () => this.handleClose());
+    this.ws.addEventListener("error", () => this.handleClose());
   }
 
   private ensureWired() {
-    if ((this as any)._wired) return;
-    (this as any)._wired = true;
+    if (this._wired) return;
+    this._wired = true;
     this.ws.addEventListener("message", (ev) => {
       try {
-        const msg: any = JSON.parse(typeof ev.data === "string" ? ev.data : "{}");
+        const raw = typeof ev.data === "string" ? ev.data : "{}";
+        const msg = JSON.parse(raw) as Record<string, unknown>;
         if (!msg || msg.roomId !== this.roomId) return;
-        if (msg.sys === 'roster') {
+        if (msg.sys === "error" && typeof msg.code === "string") {
+          this.onError?.(msg.code);
+          return;
+        }
+        if (msg.sys === "roster") {
           const roster = Array.isArray(msg.roster) ? (msg.roster as PlayerId[]) : [];
           this.rosterHandlers.forEach((h) => h(roster));
           return;
         }
+        if (typeof msg.from !== "string") return;
         if (msg.from === this.localId) return;
-        if (msg.kind === "desc") this.descHandlers.forEach((h) => h(msg.payload, msg.from));
-        if (msg.kind === "ice") this.iceHandlers.forEach((h) => h(msg.payload, msg.from));
+        const from = msg.from as PlayerId;
+        if (msg.kind === "desc" && msg.payload != null) this.descHandlers.forEach((h) => h(msg.payload as RTCSessionDescriptionInit, from));
+        if (msg.kind === "ice" && msg.payload != null) this.iceHandlers.forEach((h) => h(msg.payload as RTCIceCandidateInit, from));
       } catch {
         // ignore
       }
@@ -48,8 +141,14 @@ export class WebSocketSignaling implements SignalingAdapter {
 
   async register(): Promise<void> {
     await this.isOpen;
-    // Send a lightweight registration message to join room and receive roster
-    this.ws.send(JSON.stringify({ roomId: this.roomId, from: this.localId, announce: true, kind: 'register' }));
+    const payload: Record<string, unknown> = {
+      roomId: this.roomId,
+      from: this.localId,
+      announce: true,
+      kind: 'register',
+    };
+    if (this.roomToken !== undefined) payload.roomToken = this.roomToken;
+    this.ws.send(JSON.stringify(payload));
   }
 
   async announce(localDescription: RTCSessionDescriptionInit, to?: PlayerId): Promise<void> {
@@ -92,5 +191,17 @@ export class WebSocketSignaling implements SignalingAdapter {
       payload: candidate,
     };
     this.ws.send(JSON.stringify(env));
+  }
+
+  close(): void {
+    this.closedIntentionally = true;
+    if (this.reconnectTimeoutId !== undefined) {
+      clearTimeout(this.reconnectTimeoutId);
+      this.reconnectTimeoutId = undefined;
+    }
+    this.descHandlers.length = 0;
+    this.iceHandlers.length = 0;
+    this.rosterHandlers.length = 0;
+    this.ws.close();
   }
 }

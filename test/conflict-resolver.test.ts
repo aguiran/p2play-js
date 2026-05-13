@@ -8,7 +8,7 @@ function baseState(): GlobalGameState {
 
 describe('ConflictResolver', () => {
   it('accepts latest move in timestamp mode', () => {
-    const r = new ConflictResolver('timestamp', () => undefined, () => []);
+    const r = new ConflictResolver('timestamp');
     const st = baseState();
     const m1: NetMessage = { t: 'move', from: 'P1', ts: 1, seq: 1, position: { x: 1, y: 1 } } as any;
     const m2: NetMessage = { t: 'move', from: 'P1', ts: 2, seq: 2, position: { x: 2, y: 2 } } as any;
@@ -18,16 +18,17 @@ describe('ConflictResolver', () => {
     expect(st.players['P1'].position).toEqual({ x: 2, y: 2 });
   });
 
-  it('rejects non-authoritative in authoritative mode', () => {
-    const r = new ConflictResolver('authoritative', () => 'HOST', () => []);
+  it('allows self-move (self-authoritative model)', () => {
+    const r = new ConflictResolver('timestamp');
     const st = baseState();
-    const msg: NetMessage = { t: 'move', from: 'P1', ts: 1, seq: 1, position: { x: 1, y: 1 } } as any;
-    expect(r.resolveMove(st, msg)).toBe(false);
-    expect(st.players['P1']).toBeUndefined();
+    st.players['P1'] = { id: 'P1', position: { x: 0, y: 0 } };
+    const msg: NetMessage = { t: 'move', from: 'P1', ts: 1, seq: 1, position: { x: 5, y: 5 } } as any;
+    expect(r.resolveMove(st, msg)).toBe(true);
+    expect(st.players['P1'].position).toEqual({ x: 5, y: 5 });
   });
 
   it('inventory last-writer-wins', () => {
-    const r = new ConflictResolver('timestamp', () => undefined, () => []);
+    const r = new ConflictResolver('timestamp');
     const st = baseState();
     const upd: NetMessage = { t: 'inventory', from: 'P1', ts: 1, seq: 1, items: [{ id: 'potion', type: 'heal', quantity: 2 }] } as any;
     expect(r.resolveInventory(st, upd)).toBe(true);
@@ -35,7 +36,7 @@ describe('ConflictResolver', () => {
   });
 
   it('transfer enforces quantities and moves items', () => {
-    const r = new ConflictResolver('timestamp', () => undefined, () => []);
+    const r = new ConflictResolver('timestamp');
     const st = baseState();
     // seed inventory
     st.inventories['P1'] = [{ id: 'potion', type: 'heal', quantity: 2 }];

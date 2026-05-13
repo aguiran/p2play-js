@@ -13,7 +13,12 @@ export function createSerializer(strategy: SerializationStrategy = "json"): Seri
     };
   }
   if (strategy === "binary-min") {
-    // Minimal binary: just UTF-8 JSON for demo (hook for future CBOR/Flatbuffers)
+    /**
+     * "binary-min": binary transport for JSON payloads (UTF-8 encoded as ArrayBuffer).
+     * Useful to force the binary path on RTCDataChannel.send() instead of string mode.
+     * The wire format (UTF-8 JSON) is stable; future versions may add CBOR/FlatBuffers/MessagePack
+     * encoders under the same option without changing the public API.
+     */
     const enc = new TextEncoder();
     const dec = new TextDecoder();
     return {

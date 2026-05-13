@@ -6,13 +6,8 @@ export default defineConfig({
       provider: 'v8',
       reporter: ['text-summary', 'lcov'],
       reportsDirectory: './coverage',
-      include: [
-        'src/events/**/*.ts',
-        'src/sync/**/*.ts',
-        'src/game/MovementSystem.ts',
-        'src/net/serialization.ts'
-      ],
-      exclude: ['src/index.ts'],
+      include: ['src/**/*.ts'],
+      exclude: ['src/index.ts', 'src/types.ts'],
     },
     include: ['test/**/*.test.ts']
   }

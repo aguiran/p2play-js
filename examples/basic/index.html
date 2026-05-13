@@ -180,9 +180,9 @@
                     };
                     addMessage(`Connection error: ${JSON.stringify(errorDetails)}`, 'error');
                     addMessage(`ReadyState during error: ${ws.readyState} (0=CONNECTING, 1=OPEN, 2=CLOSING, 3=CLOSED)`);
-                    console.error('WebSocket error details:', error);
-                    console.error('WebSocket state:', ws.readyState);
-                    console.error('WebSocket URL:', url);
+                    console.error('[basic-demo] WebSocket error details:', error);
+                    console.error('[basic-demo] WebSocket state:', ws.readyState);
+                    console.error('[basic-demo] WebSocket URL:', url);
                 };
                 
             } catch (e) {

@@ -18,7 +18,7 @@ describe('MovementSystem', () => {
     expect(state.players.A.position.y).toBe(0);
   });
 
-  it('resolves simple collisions by separating circles', () => {
+  it('resolves collision by pushing only the local player away', () => {
     const bus = new EventBus();
     const state = {
       players: {
@@ -26,11 +26,10 @@ describe('MovementSystem', () => {
         B: { id: 'B', position: { x: 10, y: 0, z: 0 } }
       }, inventories: {}, objects: {}, tick: 0
     } as any;
-    const ms = new MovementSystem(bus, () => state, { playerRadius: 8 });
+    const ms = new MovementSystem(bus, () => state, { playerRadius: 8 }, () => 'A');
     ms.resolveCollisions();
-    const ax = state.players.A.position.x;
-    const bx = state.players.B.position.x;
-    expect(bx - ax).toBeGreaterThanOrEqual(16);
+    expect(state.players.A.position.x).toBeLessThan(0);
+    expect(state.players.B.position.x).toBe(10);
   });
 });
 
