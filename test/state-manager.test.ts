@@ -132,6 +132,12 @@ describe('StateManager applyFullState with inventories', () => {
 });
 
 describe('StateManager prepareForResync', () => {
+  it('is a no-op when local id is undefined', () => {
+    const bus = new EventBus();
+    const sm = new StateManager(bus, 'timestamp', () => undefined);
+    expect(() => sm.prepareForResync()).not.toThrow();
+  });
+
   it('after prepareForResync, next state_full updates local player', () => {
     const bus = new EventBus();
     const sm = new StateManager(bus, 'timestamp', () => 'LOCAL');
