@@ -4,7 +4,6 @@ import { PingOverlay } from "../overlay/PingOverlay";
 import { StateManager } from "../sync/StateManager";
 import { MovementSystem } from "./MovementSystem";
 import {
-  ConflictResolution,
   DeltaStateMessage,
   EventHandlerMap,
   EventName,
@@ -43,9 +42,7 @@ export class P2PGameLibrary {
 
     this.state = new StateManager(
       this.bus,
-      this.options.conflictResolution as ConflictResolution,
-      () => this.options.authoritativeClientId,
-      () => this.getConnectedPeers(),
+      this.options.conflictResolution,
       () => this.localId,
       options.debug
     );
@@ -57,25 +54,19 @@ export class P2PGameLibrary {
       options.iceServers,
       options.debug,
       options.backpressure,
-      this.options.maxPlayers
+      this.options.maxPlayers,
+      options.timing
     );
     this.localId = options.signaling.localId;
 
     this.overlay = new PingOverlay(this.bus, options.pingOverlay);
-    this.movement = new MovementSystem(this.bus, () => this.state.getState(), this.options.movement ?? {});
+    this.movement = new MovementSystem(this.bus, () => this.state.getState(), this.options.movement ?? {}, () => this.localId);
 
     // Route network messages to state manager
     this.unsubs.push(this.bus.on("netMessage", (msg: NetMessage) => this.state.handleNetMessage(msg)));
 
-    // If authoritative mode and no explicit authoritative id, bind it to current host automatically
-    this.unsubs.push(this.bus.on("hostChange", (hostId: PlayerId) => {
-      if (
-        this.options.conflictResolution === "authoritative" &&
-        !this.options.authoritativeClientId
-      ) {
-        this.options.authoritativeClientId = hostId;
-      }
     // When we become host, push a fresh full state to stabilize all peers
+    this.unsubs.push(this.bus.on("hostChange", (hostId: PlayerId) => {
       if (hostId === this.localId) {
         this.broadcastFullState(this.localId);
       }
@@ -162,17 +153,20 @@ export class P2PGameLibrary {
   // Movement API
   broadcastMove(selfId: PlayerId, position: { x: number; y: number }, velocity?: { x: number; y: number }) {
     if (this.disposed) throw new Error("P2PGameLibrary has been disposed");
+    const st = this.state.getState();
+    const player = (st.players[selfId] = st.players[selfId] ?? { id: selfId, position: { x: 0, y: 0 } });
+    player.position = { ...player.position, ...position };
+    if (velocity) player.velocity = { ...player.velocity, ...velocity };
     const msg: MoveMessage = { t: "move", from: selfId, ts: performance.now(), seq: this.nextSeq(selfId), position, velocity };
     this.peers.broadcast(msg);
   }
 
-  // Presence API: ensure local player exists and broadcast a no-op move to announce presence
+  // Presence API: ensure local player exists (or update position) and broadcast a move to announce presence
   announcePresence(selfId: PlayerId, position: { x: number; y: number } = { x: 0, y: 0 }) {
     if (this.disposed) throw new Error("P2PGameLibrary has been disposed");
     const st = this.state.getState();
-    if (!st.players[selfId]) {
-      st.players[selfId] = { id: selfId, position: { ...position } };
-    }
+    const player = (st.players[selfId] = st.players[selfId] ?? { id: selfId, position: { x: 0, y: 0 } });
+    player.position = { ...player.position, ...position };
     const msg: MoveMessage = { t: "move", from: selfId, ts: performance.now(), position };
     this.peers.broadcast(msg);
   }
@@ -222,10 +216,6 @@ export class P2PGameLibrary {
   setPingOverlayEnabled(enabled: boolean) {
     if (this.disposed) throw new Error("P2PGameLibrary has been disposed");
     this.overlay.setEnabled(enabled);
-  }
-
-  private getConnectedPeers(): PlayerId[] {
-    return this.peers.getPeerIds();
   }
 
   // Game loop helpers

@@ -1,4 +1,5 @@
 import { ConflictResolver } from "./ConflictResolver";
+import { getAtPath, setAtPath } from "./pathUtils";
 import {
   ConflictResolution,
   DebugOptions,
@@ -23,8 +24,6 @@ export class StateManager {
   constructor(
     bus: EventBus,
     mode: ConflictResolution,
-    getAuthoritativeId: () => PlayerId | undefined,
-    getMajority: () => PlayerId[],
     getLocalId: () => PlayerId | undefined,
     debug?: DebugOptions
   ) {
@@ -36,7 +35,7 @@ export class StateManager {
       objects: {},
       tick: 0,
     };
-    this.resolver = new ConflictResolver(mode, getAuthoritativeId, getMajority);
+    this.resolver = new ConflictResolver(mode);
     this.getLocalId = getLocalId;
   }
 
@@ -59,13 +58,7 @@ export class StateManager {
    */
   setPathsValues(changes: Array<{ path: string; value: unknown }>): void {
     for (const change of changes) {
-      const segments = change.path.split(".");
-      let cursor: Record<string, unknown> = this.state as unknown as Record<string, unknown>;
-      for (let i = 0; i < segments.length - 1; i++) {
-        const seg = segments[i];
-        cursor = (cursor[seg] ?? (cursor[seg] = {})) as Record<string, unknown>;
-      }
-      cursor[segments[segments.length - 1]] = structuredClone(change.value);
+      setAtPath(this.state as unknown as Record<string, unknown>, change.path, structuredClone(change.value));
     }
   }
 
@@ -151,12 +144,8 @@ export class StateManager {
   }
 
   private getPathValue(path: string): unknown {
-    const segments = path.split(".");
-    let cursor: Record<string, unknown> | undefined = this.state as unknown as Record<string, unknown>;
-    for (const seg of segments) {
-      cursor = cursor === undefined ? undefined : (cursor[seg] as Record<string, unknown> | undefined);
-    }
-    return structuredClone(cursor);
+    const value = getAtPath(this.state as unknown as Record<string, unknown>, path);
+    return structuredClone(value);
   }
 }
 

@@ -1,5 +1,6 @@
 import { EventBus } from "../events/EventBus";
-import { BackpressureOptions, BackpressureStrategy, DebugOptions, NetMessage, PlayerId, SendDebugInfo, SendOptions, SerializationStrategy } from "../types";
+import { BACKPRESSURE_THRESHOLD_BYTES, PENDING_OFFER_TIMEOUT_MS, PING_INTERVAL_MS } from "../defaults";
+import { BackpressureOptions, BackpressureStrategy, DebugOptions, NetMessage, PlayerId, PeerTimingOptions, SendDebugInfo, SendOptions, SerializationStrategy } from "../types";
 import { createSerializer, Serializer } from "./serialization";
 
 export interface SignalingAdapter {
@@ -22,32 +23,35 @@ export interface PeerInfo {
   dcReliable?: RTCDataChannel;
   pingMs: number;
   lastPongTs?: number;
+  joined?: boolean;
   outboxUnreliable?: Array<string | ArrayBuffer>;
   outboxReliable?: Array<string | ArrayBuffer>;
 }
 
-const PENDING_OFFER_TIMEOUT_MS = 30_000;
 const UNRELIABLE_TYPES: ReadonlySet<string> = new Set(["move", "ping", "pong"]);
 
 export class PeerManager {
   private peers: Map<PlayerId, PeerInfo> = new Map();
   private bus: EventBus;
   private signaling: SignalingAdapter;
-  private pingIntervalId?: number;
+  private pingIntervalId?: ReturnType<typeof setInterval>;
   private localId: PlayerId;
   private pendingInitiators: Map<PlayerId, PeerInfo> = new Map();
   private pendingTimeouts: Map<PlayerId, ReturnType<typeof setTimeout>> = new Map();
   private bufferedRemoteIce: Map<PlayerId, RTCIceCandidateInit[]> = new Map();
   private hostId?: PlayerId;
+  private hostConfirmedWithPeers = false;
   private serializer: Serializer;
   private customIceServers?: RTCIceServer[];
   private debug: DebugOptions = {};
   private serializationStrategy: SerializationStrategy = "json";
-  private backpressure: Required<BackpressureOptions> = { strategy: "coalesce-moves", thresholdBytes: 262144 };
+  private backpressure: Required<BackpressureOptions> = { strategy: "coalesce-moves", thresholdBytes: BACKPRESSURE_THRESHOLD_BYTES };
   private maxPlayers?: number;
+  private readonly pendingOfferTimeoutMs: number;
+  private readonly pingIntervalMs: number;
   private disposed = false;
 
-constructor(bus: EventBus, signaling: SignalingAdapter, serializationStrategy: SerializationStrategy = "json", iceServers?: RTCIceServer[], debug?: DebugOptions, backpressure?: BackpressureOptions, maxPlayers?: number) {
+constructor(bus: EventBus, signaling: SignalingAdapter, serializationStrategy: SerializationStrategy = "json", iceServers?: RTCIceServer[], debug?: DebugOptions, backpressure?: BackpressureOptions, maxPlayers?: number, timing?: PeerTimingOptions) {
     this.bus = bus;
     this.signaling = signaling;
     this.localId = signaling.localId;
@@ -55,8 +59,10 @@ constructor(bus: EventBus, signaling: SignalingAdapter, serializationStrategy: S
   if (iceServers) this.customIceServers = iceServers;
   this.debug = debug ?? {};
   this.serializationStrategy = serializationStrategy;
-  if (backpressure) this.backpressure = { strategy: backpressure.strategy ?? "coalesce-moves", thresholdBytes: backpressure.thresholdBytes ?? 262144 };
+  if (backpressure) this.backpressure = { strategy: backpressure.strategy ?? "coalesce-moves", thresholdBytes: backpressure.thresholdBytes ?? BACKPRESSURE_THRESHOLD_BYTES };
   this.maxPlayers = maxPlayers;
+  this.pendingOfferTimeoutMs = timing?.pendingOfferTimeoutMs ?? PENDING_OFFER_TIMEOUT_MS;
+  this.pingIntervalMs = timing?.pingIntervalMs ?? PING_INTERVAL_MS;
   }
 
   getPeerIds(): PlayerId[] {
@@ -70,6 +76,7 @@ constructor(bus: EventBus, signaling: SignalingAdapter, serializationStrategy: S
   async createOrJoin(): Promise<void> {
     // Register presence and subscribe to roster updates for deterministic full-mesh
     await this.signaling.register();
+    this.electHost();
 
     this.signaling.onRoster((roster) => {
       if (this.disposed) return;
@@ -79,7 +86,7 @@ constructor(bus: EventBus, signaling: SignalingAdapter, serializationStrategy: S
         if (!rosterSet.has(pid)) {
           try { info.rtc.close(); } catch {}
           this.peers.delete(pid);
-          this.bus.emit("peerLeave", pid);
+          if (info.joined) this.bus.emit("peerLeave", pid);
         }
       }
       // Cleanup pendingInitiators no longer in roster
@@ -121,7 +128,7 @@ constructor(bus: EventBus, signaling: SignalingAdapter, serializationStrategy: S
           this.pendingInitiators.delete(from);
           this.peers.set(from, info);
           this.flushBufferedIce(from, info);
-          this.maybeElectHost(from);
+          this.electHost();
         }
         if (!info) return; // stray answer
         if (info.rtc.signalingState !== "have-local-offer") return;
@@ -137,7 +144,7 @@ constructor(bus: EventBus, signaling: SignalingAdapter, serializationStrategy: S
         if (!info) {
           info = await this.createPeer(from, false);
           this.flushBufferedIce(from, info);
-          this.maybeElectHost(from);
+          this.electHost();
         }
         if (info.rtc.signalingState !== "stable") return;
         await info.rtc.setRemoteDescription(desc);
@@ -190,8 +197,9 @@ constructor(bus: EventBus, signaling: SignalingAdapter, serializationStrategy: S
       if (this.disposed) return;
       if (rtc.connectionState === "connected") {
         // avoid adding self
-        if (info.id !== this.localId) {
+        if (info.id !== this.localId && !this.peers.get(info.id)?.joined) {
           // Add peer, elect host, then emit peerJoin to guarantee order hostChange -> peerJoin
+          info.joined = true;
           this.peers.set(info.id, info);
           this.electHost();
           this.bus.emit("peerJoin", info.id);
@@ -205,7 +213,10 @@ constructor(bus: EventBus, signaling: SignalingAdapter, serializationStrategy: S
           this.pendingInitiators.delete(info.id);
         }
         const existed = this.peers.delete(info.id);
-        if (existed) this.bus.emit("peerLeave", info.id);
+        if (existed && info.joined) {
+          info.joined = false;
+          this.bus.emit("peerLeave", info.id);
+        }
         // host migration: if we lost host, re-elect
         if (this.hostId === info.id) {
           this.hostId = undefined;
@@ -245,7 +256,9 @@ constructor(bus: EventBus, signaling: SignalingAdapter, serializationStrategy: S
             if (typeof payload === "string") dc.send(payload);
             else dc.send(payload);
           } catch (error) {
-            console.warn(`Failed to send queued message to peer ${info.id} (${kind}):`, error);
+            if (this.debug.enabled) {
+              console.warn(`Failed to send queued message to peer ${info.id} (${kind}):`, error);
+            }
           }
         }
         if (kind === "unreliable") info.outboxUnreliable = [];
@@ -277,7 +290,7 @@ constructor(bus: EventBus, signaling: SignalingAdapter, serializationStrategy: S
         try { info.rtc.close(); } catch {}
         if (this.debug.enabled) console.debug("[p2play] pending offer timeout:", targetId);
       }
-    }, PENDING_OFFER_TIMEOUT_MS);
+    }, this.pendingOfferTimeoutMs);
     this.pendingTimeouts.set(targetId, timeoutId);
     this.wirePeer(info, true);
     const offer = await rtc.createOffer();
@@ -290,11 +303,6 @@ constructor(bus: EventBus, signaling: SignalingAdapter, serializationStrategy: S
     if (!list) return;
     list.forEach((c) => info.rtc.addIceCandidate(c));
     this.bufferedRemoteIce.delete(peerId);
-  }
-
-  private maybeElectHost(newPeerId: PlayerId) {
-    // Always re-evaluate to ensure smallest-id host after any topology change
-    this.electHost();
   }
 
   /**
@@ -316,8 +324,11 @@ constructor(bus: EventBus, signaling: SignalingAdapter, serializationStrategy: S
   private electHost() {
     const all = [this.localId, ...this.getPeerIds()];
     const newHost = all.reduce((min, id) => (this.comparePlayerIds(id, min) < 0 ? id : min));
-    if (newHost !== this.hostId) {
+    const hasPeers = this.getPeerIds().length > 0;
+    const needsEmit = newHost !== this.hostId || (hasPeers && !this.hostConfirmedWithPeers);
+    if (needsEmit) {
       this.hostId = newHost;
+      if (hasPeers) this.hostConfirmedWithPeers = true;
       this.bus.emit("hostChange", newHost);
     }
   }
@@ -342,10 +353,11 @@ constructor(bus: EventBus, signaling: SignalingAdapter, serializationStrategy: S
     for (const [pid, info] of [...this.peers.entries()]) {
       try { info.rtc.close(); } catch {}
       this.peers.delete(pid);
-      this.bus.emit("peerLeave", pid);
+      if (info.joined) this.bus.emit("peerLeave", pid);
     }
     this.bufferedRemoteIce.clear();
     this.hostId = undefined;
+    this.hostConfirmedWithPeers = false;
     this.electHost();
   }
 
@@ -412,6 +424,7 @@ constructor(bus: EventBus, signaling: SignalingAdapter, serializationStrategy: S
     this.pendingInitiators.clear();
     this.bufferedRemoteIce.clear();
     this.hostId = undefined;
+    this.hostConfirmedWithPeers = false;
   }
 
   private pickChannel(msg: NetMessage, options?: SendOptions): "unreliable" | "reliable" {
@@ -477,7 +490,9 @@ constructor(bus: EventBus, signaling: SignalingAdapter, serializationStrategy: S
           const parsed = JSON.parse(txt);
           if (parsed && parsed.t === 'move') { box[i] = payload; return; }
         } catch (error) {
-          console.debug(`Invalid message in outbox, skipping coalesce:`, error);
+          if (this.debug.enabled) {
+            console.debug(`Invalid message in outbox, skipping coalesce:`, error);
+          }
         }
       }
     }
@@ -499,14 +514,14 @@ constructor(bus: EventBus, signaling: SignalingAdapter, serializationStrategy: S
   }
 
   private startPingLoop() {
-    if (this.pingIntervalId) window.clearInterval(this.pingIntervalId);
-    this.pingIntervalId = window.setInterval(() => {
+    if (this.pingIntervalId) clearInterval(this.pingIntervalId);
+    this.pingIntervalId = setInterval(() => {
       const ts = performance.now();
       const ping = JSON.stringify({ t: "ping", ts });
       for (const peer of this.peers.values()) {
         if (peer.dcUnreliable?.readyState === "open") peer.dcUnreliable.send(ping);
       }
-    }, 2000);
+    }, this.pingIntervalMs);
   }
 
   private getMaxRemotePeers(): number {

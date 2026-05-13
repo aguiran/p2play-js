@@ -20,7 +20,7 @@ export function isValidNetMessage(msg: unknown): msg is NetMessage {
     case "transfer": {
       if (typeof m.to !== "string" || m.item === null || typeof m.item !== "object") return false;
       const item = m.item as Record<string, unknown>;
-      return typeof item.id === "string" && typeof item.quantity === "number";
+      return typeof item.id === "string" && typeof item.quantity === "number" && typeof item.type === "string";
     }
     case "state_full":
       return m.state !== null && typeof m.state === "object";

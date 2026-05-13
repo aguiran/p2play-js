@@ -1,4 +1,5 @@
 import { PlayerId } from "../types";
+import { RECONNECT_BASE_MS, RECONNECT_MAX_MS } from "../defaults";
 import { SignalingAdapter } from "./PeerManager";
 
 type SignalEnvelope = {
@@ -10,8 +11,6 @@ type SignalEnvelope = {
   announce?: boolean;
 };
 
-const RECONNECT_BASE_MS = 1000;
-const RECONNECT_MAX_MS = 30_000;
 const RECONNECT_JITTER = 0.25;
 
 export class WebSocketSignaling implements SignalingAdapter {
@@ -29,16 +28,28 @@ export class WebSocketSignaling implements SignalingAdapter {
   private onDisconnectCb: (() => void) | undefined;
   private onReconnectCb: (() => void) | undefined;
   private readonly roomToken: string | undefined;
+  private readonly onError: ((code: string) => void) | undefined;
+  private readonly reconnectBaseMs: number;
+  private readonly reconnectMaxMs: number;
 
   constructor(
     public localId: PlayerId,
     public roomId: string,
     serverUrl: string,
-    options?: { reconnect?: boolean; roomToken?: string }
+    options?: {
+      reconnect?: boolean;
+      roomToken?: string;
+      onError?: (code: string) => void;
+      /** Backoff for reconnection: baseMs (default 1000), maxMs (default 30000). Use positive values. */
+      reconnectOptions?: { baseMs?: number; maxMs?: number };
+    }
   ) {
     this.serverUrl = serverUrl;
     this.reconnect = options?.reconnect ?? false;
     this.roomToken = options?.roomToken;
+    this.onError = options?.onError;
+    this.reconnectBaseMs = options?.reconnectOptions?.baseMs ?? RECONNECT_BASE_MS;
+    this.reconnectMaxMs = options?.reconnectOptions?.maxMs ?? RECONNECT_MAX_MS;
     this.ws = new WebSocket(serverUrl);
     this.isOpen = new Promise((resolve) => {
       this.ws.addEventListener("open", () => resolve());
@@ -66,8 +77,8 @@ export class WebSocketSignaling implements SignalingAdapter {
   private scheduleReconnect(): void {
     if (this.closedIntentionally || this.reconnectTimeoutId !== undefined) return;
     const delay = Math.min(
-      RECONNECT_MAX_MS,
-      RECONNECT_BASE_MS * Math.pow(2, this.reconnectAttempt)
+      this.reconnectMaxMs,
+      this.reconnectBaseMs * Math.pow(2, this.reconnectAttempt)
     );
     const jitter = 1 + Math.random() * RECONNECT_JITTER;
     const ms = Math.round(delay * jitter);
@@ -108,6 +119,10 @@ export class WebSocketSignaling implements SignalingAdapter {
         const raw = typeof ev.data === "string" ? ev.data : "{}";
         const msg = JSON.parse(raw) as Record<string, unknown>;
         if (!msg || msg.roomId !== this.roomId) return;
+        if (msg.sys === "error" && typeof msg.code === "string") {
+          this.onError?.(msg.code);
+          return;
+        }
         if (msg.sys === "roster") {
           const roster = Array.isArray(msg.roster) ? (msg.roster as PlayerId[]) : [];
           this.rosterHandlers.forEach((h) => h(roster));

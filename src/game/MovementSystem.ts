@@ -6,8 +6,10 @@ export class MovementSystem {
   private lastMoveTsByPlayer: Map<PlayerId, number> = new Map();
   private lastFrameTsByPlayer: Map<PlayerId, number> = new Map();
   private unsub: () => void;
+  private localId: () => PlayerId | undefined;
 
-  constructor(private bus: EventBus, private state: () => GlobalGameState, cfg: MovementOptions = {}) {
+  constructor(private bus: EventBus, private state: () => GlobalGameState, cfg: MovementOptions = {}, localId?: () => PlayerId | undefined) {
+    this.localId = localId ?? (() => undefined);
     this.cfg = {
       maxSpeed: cfg.maxSpeed ?? 400,
       smoothing: cfg.smoothing ?? 0.2,
@@ -81,39 +83,35 @@ export class MovementSystem {
     }
   }
 
-  // Simple distributed collision resolution: sphere vs sphere, resolve by nudging apart in 3D
+  // Collision resolution: only the local player is pushed away from remote players.
+  // Remote positions are the network source of truth and are never modified locally.
   resolveCollisions() {
     const gs = this.state();
-    const players = Object.values(gs.players);
-    for (let i = 0; i < players.length; i++) {
-      for (let j = i + 1; j < players.length; j++) {
-        const a = players[i];
-        const b = players[j];
-        const az = a.position.z ?? 0;
-        const bz = b.position.z ?? 0;
-        const dx = b.position.x - a.position.x;
-        const dy = b.position.y - a.position.y;
-        const dz = bz - az;
-        const distSq = dx * dx + dy * dy + dz * dz;
-        const minDist = this.cfg.playerRadius * 2;
-        if (distSq < minDist * minDist) {
-          let dist = Math.sqrt(distSq);
-          const eps = 1e-6;
-          const overlap = (minDist - Math.max(eps, dist)) / 2;
-          let nx: number, ny: number, nz: number;
-          if (dist < eps) {
-            // Positions identical: choose an arbitrary separation axis
-            nx = 1; ny = 0; nz = 0;
-          } else {
-            nx = dx / dist; ny = dy / dist; nz = dz / dist;
-          }
-          a.position.x -= nx * overlap;
-          a.position.y -= ny * overlap;
-          a.position.z = (a.position.z ?? 0) - nz * overlap;
-          b.position.x += nx * overlap;
-          b.position.y += ny * overlap;
-          b.position.z = (b.position.z ?? 0) + nz * overlap;
+    const lid = this.localId();
+    const local = lid ? gs.players[lid] : undefined;
+    if (!local) return;
+    const others = Object.values(gs.players).filter(p => p.id !== lid);
+    for (const other of others) {
+      const az = local.position.z ?? 0;
+      const bz = other.position.z ?? 0;
+      const dx = other.position.x - local.position.x;
+      const dy = other.position.y - local.position.y;
+      const dz = bz - az;
+      const distSq = dx * dx + dy * dy + dz * dz;
+      const minDist = this.cfg.playerRadius * 2;
+      if (distSq < minDist * minDist) {
+        const dist = Math.sqrt(distSq);
+        const eps = 1e-6;
+        const overlap = minDist - Math.max(eps, dist);
+        let nx: number, ny: number, nz: number;
+        if (dist < eps) {
+          nx = 1; ny = 0; nz = 0;
+        } else {
+          nx = dx / dist; ny = dy / dist; nz = dz / dist;
         }
+        local.position.x -= nx * overlap;
+        local.position.y -= ny * overlap;
+        local.position.z = (local.position.z ?? 0) - nz * overlap;
       }
     }
   }

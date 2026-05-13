@@ -77,4 +77,48 @@ describe('PeerManager lifecycle', () => {
     expect(leaves).toContain('B');
     expect(pm.getPeerIds()).not.toContain('B');
   });
+
+  it('does not emit duplicate peerJoin on repeated connected state', async () => {
+    const bus = new EventBus();
+    const signaling = createMockSignaling('A');
+    const pm = new PeerManager(bus, signaling as any);
+    const joins: PlayerId[] = [];
+    bus.on('peerJoin', (id: PlayerId) => joins.push(id));
+
+    await pm.createOrJoin();
+    (signaling as any).__triggerRoster(['A', 'B']);
+    (signaling as any).__triggerOffer('B');
+    (signaling as any).__triggerDesc({ type: 'answer', sdp: '' }, 'B');
+    await new Promise((r) => setImmediate(r));
+
+    const peerB = (pm as any).peers.get('B');
+    const rtc = peerB.rtc as FakeRTCPeerConnection;
+    rtc.connectionState = 'connected';
+    rtc.onconnectionstatechange?.();
+
+    expect(joins.filter((id) => id === 'B')).toHaveLength(1);
+  });
+
+  it('does not emit duplicate peerLeave on repeated terminal states', async () => {
+    const bus = new EventBus();
+    const signaling = createMockSignaling('A');
+    const pm = new PeerManager(bus, signaling as any);
+    const leaves: PlayerId[] = [];
+    bus.on('peerLeave', (id: PlayerId) => leaves.push(id));
+
+    await pm.createOrJoin();
+    (signaling as any).__triggerRoster(['A', 'B']);
+    (signaling as any).__triggerOffer('B');
+    (signaling as any).__triggerDesc({ type: 'answer', sdp: '' }, 'B');
+    await new Promise((r) => setImmediate(r));
+
+    const peerB = (pm as any).peers.get('B');
+    const rtc = peerB.rtc as FakeRTCPeerConnection;
+    rtc.connectionState = 'disconnected';
+    rtc.onconnectionstatechange?.();
+    rtc.connectionState = 'failed';
+    rtc.onconnectionstatechange?.();
+
+    expect(leaves.filter((id) => id === 'B')).toHaveLength(1);
+  });
 });

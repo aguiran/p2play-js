@@ -1,46 +1,31 @@
-import { ConflictResolution, GlobalGameState, NetMessage, PlayerId, StateDelta } from "../types";
+import { ConflictResolution, GlobalGameState, NetMessage, StateDelta } from "../types";
+import { setAtPath } from "./pathUtils";
 
 export class ConflictResolver {
-  constructor(
-    private mode: ConflictResolution,
-    private getAuthoritativeId: () => PlayerId | undefined,
-    private getMajority: () => PlayerId[]
-  ) {}
+  constructor(_mode: ConflictResolution) {}
 
-  // For movement: keep-latest by timestamp or authoritative override
+  // Movement: each sender owns updates for their own position/velocity.
   resolveMove(current: GlobalGameState, msg: NetMessage): boolean {
     if (msg.t !== "move") return false;
-    if (this.mode === "authoritative") {
-      const auth = this.getAuthoritativeId();
-      if (auth && msg.from !== auth) return false; // ignore non-authoritative
-    }
     // Last-writer-wins by per-sender sequence (checked in StateManager)
     const player = (current.players[msg.from] =
       current.players[msg.from] ?? { id: msg.from, position: { x: 0, y: 0 } });
-    // Apply authoritatively only if message seq is higher (handled in StateManager) and prefer provided fields
+    // Message ordering is enforced in StateManager via per-sender sequence.
     if (msg.position) player.position = { ...player.position, ...msg.position };
     if (msg.velocity) player.velocity = { ...player.velocity, ...msg.velocity };
     return true;
   }
 
-  // Inventory: apply last-writer-wins
+  // Inventory: last-writer-wins per player
   resolveInventory(current: GlobalGameState, msg: NetMessage): boolean {
     if (msg.t !== "inventory") return false;
-    if (this.mode === "authoritative") {
-      const auth = this.getAuthoritativeId();
-      if (auth && msg.from !== auth) return false;
-    }
     current.inventories[msg.from] = msg.items.map((it) => ({ ...it }));
     return true;
   }
 
-  // Transfer: ensure item exists in from inventory
+  // Transfer: ensure item exists in sender's inventory
   resolveTransfer(current: GlobalGameState, msg: NetMessage): boolean {
     if (msg.t !== "transfer") return false;
-    if (this.mode === "authoritative") {
-      const auth = this.getAuthoritativeId();
-      if (auth && msg.from !== auth) return false;
-    }
     const fromInv = current.inventories[msg.from] ?? [];
     const toInv = current.inventories[msg.to] ?? [];
     const idx = fromInv.findIndex((i) => i.id === msg.item.id);
@@ -58,15 +43,8 @@ export class ConflictResolver {
   }
 
   applyDelta(current: GlobalGameState, delta: StateDelta) {
-    // Very simple JSON path applier: path form a.b.c with no arrays
     for (const change of delta.changes) {
-      const segments = change.path.split(".");
-      let cursor: Record<string, unknown> = current as unknown as Record<string, unknown>;
-      for (let i = 0; i < segments.length - 1; i++) {
-        const seg = segments[i];
-        cursor = (cursor[seg] ?? (cursor[seg] = {})) as Record<string, unknown>;
-      }
-      cursor[segments[segments.length - 1]] = structuredClone(change.value);
+      setAtPath(current as unknown as Record<string, unknown>, change.path, structuredClone(change.value));
     }
     current.tick = Math.max(current.tick, delta.tick);
   }

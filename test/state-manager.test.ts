@@ -3,9 +3,9 @@ import { StateManager } from '../src/sync/StateManager';
 import { EventBus } from '../src/events/EventBus';
 import { NetMessage } from '../src/types';
 
-function makeStateManager(mode: 'timestamp' | 'authoritative' = 'timestamp') {
+function makeStateManager(mode: 'timestamp' = 'timestamp') {
   const bus = new EventBus();
-  return new StateManager(bus, mode, () => undefined, () => [], () => 'LOCAL');
+  return new StateManager(bus, mode, () => 'LOCAL');
 }
 
 describe('StateManager', () => {
@@ -29,33 +29,33 @@ describe('StateManager', () => {
   });
 });
 
-describe('StateManager authoritative rejection', () => {
-  it('rejects move from non-authoritative sender', () => {
+describe('StateManager consistency behavior', () => {
+  it('accepts move from any sender', () => {
     const bus = new EventBus();
     let moveFired = false;
-    const sm = new StateManager(bus, 'authoritative', () => 'HOST', () => [], () => 'LOCAL');
+    const sm = new StateManager(bus, 'timestamp', () => 'LOCAL');
     bus.on('playerMove', () => { moveFired = true; });
     sm.handleNetMessage({ t: 'move', from: 'RANDO', ts: 1, seq: 1, position: { x: 1, y: 2 } } as any);
-    expect(moveFired).toBe(false);
+    expect(moveFired).toBe(true);
   });
 
-  it('rejects inventory from non-authoritative sender', () => {
+  it('accepts inventory from any sender', () => {
     const bus = new EventBus();
     let invFired = false;
-    const sm = new StateManager(bus, 'authoritative', () => 'HOST', () => [], () => 'LOCAL');
+    const sm = new StateManager(bus, 'timestamp', () => 'LOCAL');
     bus.on('inventoryUpdate', () => { invFired = true; });
-    sm.handleNetMessage({ t: 'inventory', from: 'RANDO', ts: 1, seq: 1, items: [] } as any);
-    expect(invFired).toBe(false);
+    sm.handleNetMessage({ t: 'inventory', from: 'RANDO', ts: 1, seq: 1, items: [{ id: 'x', type: 't', quantity: 1 }] } as any);
+    expect(invFired).toBe(true);
   });
 
-  it('rejects transfer from non-authoritative sender', () => {
+  it('accepts transfer from any sender', () => {
     const bus = new EventBus();
     let trFired = false;
-    const sm = new StateManager(bus, 'authoritative', () => 'HOST', () => [], () => 'LOCAL');
+    const sm = new StateManager(bus, 'timestamp', () => 'LOCAL');
     bus.on('objectTransfer', () => { trFired = true; });
     sm.getState().inventories['RANDO'] = [{ id: 'p', type: 't', quantity: 5 }];
     sm.handleNetMessage({ t: 'transfer', from: 'RANDO', to: 'B', ts: 1, seq: 1, item: { id: 'p', type: 't', quantity: 1 } } as any);
-    expect(trFired).toBe(false);
+    expect(trFired).toBe(true);
   });
 });
 
@@ -86,7 +86,7 @@ describe('StateManager applyFullState with inventories', () => {
 describe('StateManager prepareForResync', () => {
   it('after prepareForResync, next state_full updates local player', () => {
     const bus = new EventBus();
-    const sm = new StateManager(bus, 'timestamp', () => undefined, () => [], () => 'LOCAL');
+    const sm = new StateManager(bus, 'timestamp', () => 'LOCAL');
     // Set initial local state
     sm.handleNetMessage({
       t: 'state_full', from: 'H', ts: 1,

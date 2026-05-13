@@ -16,13 +16,12 @@ const fakeCanvas = {
   }),
 } as unknown as HTMLCanvasElement;
 
-async function setupWithPeer(opts?: { cleanupOnPeerLeave?: boolean; conflictResolution?: string }) {
+async function setupWithPeer(opts?: { cleanupOnPeerLeave?: boolean }) {
   const signaling = createMockSignaling('A');
   const game = new P2PGameLibrary({
     signaling: signaling as never,
     pingOverlay: { canvas: fakeCanvas },
     cleanupOnPeerLeave: opts?.cleanupOnPeerLeave,
-    conflictResolution: opts?.conflictResolution as any,
   });
   await game.start();
   signaling.__triggerRoster(['A', 'B']);
@@ -168,11 +167,6 @@ describe('P2PGameLibrary API — event handlers', () => {
     game.stop();
   });
 
-  it('hostChange in authoritative mode binds authoritativeClientId to host', async () => {
-    const { game } = await setupWithPeer({ conflictResolution: 'authoritative' });
-    expect((game as any).options.authoritativeClientId).toBe('A');
-    game.stop();
-  });
 });
 
 describe('P2PGameLibrary API — utilities', () => {

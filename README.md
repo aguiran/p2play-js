@@ -7,7 +7,7 @@ Modular TypeScript library to build browser-based P2P (WebRTC) multiplayer games
 [![npm version](https://img.shields.io/npm/v/@p2play-js/p2p-game.svg)](https://www.npmjs.com/package/@p2play-js/p2p-game)
 [![license: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](./LICENSE)
 [![codecov](https://codecov.io/gh/aguiran/p2play-js/graph/badge.svg)](https://codecov.io/gh/aguiran/p2play-js)
-[![Bundle size](https://deno.bundlejs.com/badge?q=@p2play-js/p2p-game@0.1.0)](https://bundlejs.com/?q=p2play-js)
+[![Bundle size](https://deno.bundlejs.com/badge?q=@p2play-js/p2p-game@0.2.0)](https://bundlejs.com/?q=p2play-js)
 
 ### Visual Example / Demo
 
@@ -22,6 +22,8 @@ Modular TypeScript library to build browser-based P2P (WebRTC) multiplayer games
 ```bash
 npm install @p2play-js/p2p-game
 ```
+
+This library targets browser runtimes (`RTCPeerConnection`, DOM). Timers use global `setInterval`/`clearInterval` for Node-based testing, but the runtime is not designed for SSR or production Node servers.
 
 ### Quick API
 
@@ -38,6 +40,7 @@ const multiplayer = new P2PGameLibrary({
   // serialization: 'binary-min',
   // cleanupOnPeerLeave: true,
   // backpressure: { strategy: 'coalesce-moves', thresholdBytes: 262144 },
+  // timing: { pendingOfferTimeoutMs: 30000, pingIntervalMs: 2000 }, // override P2P timing (use positive values)
   // debug: {
   //   enabled: true,
   //   onSend(info) {
@@ -106,7 +109,7 @@ multiplayer.setStateAndBroadcast("playerA", [
 - **Dual DataChannels per peer**: automatic routing between a fast unreliable channel (move/ping) and a reliable channel (inventory, transfers, state sync, payloads)
 - Global shared state: players, inventories, objects, tick. `getState()` returns a deep copy so mutations do not affect internal state; use `broadcastMove()`, `setStateAndBroadcast()`, etc. to mutate and sync.
 - Sync strategies: the library handles both full snapshots (`state_full`) and delta updates (`state_delta`). Your app decides when to send each via `broadcastFullState()` or `broadcastDelta()`.
-- Consistency strategies: `timestamp`, `authoritative`
+- Consistency strategy: `timestamp`
 - Event handling: movement, inventories, transfers, shared payloads
 - Ping overlay: per-peer latency, simple chart
 
@@ -135,8 +138,6 @@ multiplayer.sendPayload("playerA", "playerB", data, "channel", { unreliable: tru
 ```
 
 `broadcastMove` always uses unreliable (by design). `broadcastFullState` and `broadcastDelta` always use reliable (critical data).
-
-> **Migration note**: Prior versions used a single DataChannel named `"game"`. The library now creates two channels per peer: `"game-unreliable"` and `"game-reliable"`. If you accessed `PeerInfo.dc` or `PeerInfo.outbox` directly, migrate to `dcUnreliable`/`dcReliable` and `outboxUnreliable`/`outboxReliable`. If you intercepted `ondatachannel` events, note that it now fires twice per peer (once per channel, identified by `label`).
 
 ### Network and signaling
 
@@ -184,7 +185,7 @@ Tip: deploy a TURN server (e.g., coturn) if your users are often behind strict n
 
 - `MovementSystem` applies light interpolation and capped extrapolation from `velocity`.
 - 2D/3D support: positions/velocities accept an optional `z`. Use `worldBounds.depth` to constrain Z.
-- Simplified collision resolution: circles (2D) or spheres (3D) with symmetric separation.
+- Simplified collision resolution: circles (2D) or spheres (3D). Resolution is local-only: only the local player is nudged away from overlaps, remote positions are not mutated locally.
 
 #### Movement configuration
 
@@ -222,33 +223,13 @@ const multiplayer = new P2PGameLibrary({
 });
 ```
 
-### Consistency modes
+### Consistency model
 
-- timestamp (default): accept the latest received action.
-- authoritative: only actions from the host (or `authoritativeClientId`) are applied.
-
-Ordering & deduplication
-- Each application message carries `seq` (per‑sender monotonic counter). Receivers ignore any `seq` ≤ last seen for that sender.
-- Last‑Writer‑Wins (LWW): the “latest author” (largest `seq` for a given sender) wins. No echoes: peers never re‑broadcast application messages.
-
-#### Authoritative mode: details and implications
-
-- **Authority source**: by default, if `conflictResolution: "authoritative"` is active and `authoritativeClientId` is not provided, the current host ID becomes the authority. During a `hostChange`, if no authority is explicitly defined, it automatically switches to the new host.
-- **Action application**: only actions coming from the `authoritativeClientId` are accepted (movement, inventory, transfers). Other peers’ actions are ignored by internal logic.
-- **Non‑authoritative client experience**:
-  - Local actions are not applied directly. You must either:
-    - Relay intents to the authority (e.g., via payload/application protocol) which applies the mutation and broadcasts it, or
-    - Implement optimistic UI and accept corrections (authority deltas). The library doesn’t provide automatic reconciliation; your app must handle optimism and corrections.
-  - **Latency**: perceived latency is at least one round trip to the authority (RTT) before shared state updates are visible.
-- **Host migration**:
-  - The host is elected deterministically by a total order on `playerId`: numeric comparison when both IDs are digit-only strings (e.g. `"2"` before `"10"`), otherwise strict binary string order (e.g. `"A"` before `"B"`, `"2"` before `"A"`). On host loss, re‑election occurs and a `hostChange` is emitted.
-  - If no explicit authority is set, authority automatically switches to the new host.
-  - The new host sends a `state_full` to realign everyone.
-- **Security/anti‑cheat**: this remains a “client‑authoritative” model (authority = a client). It isn’t cheat‑proof. For a secure model, use a trusted/headless host and set `authoritativeClientId` explicitly.
-- **Best practices**:
-  - Pin `authoritativeClientId` to a controlled host (e.g., headless server) to avoid undesirable authority switches.
-  - Standardize an intents protocol for non‑authoritative clients (e.g., movement requests), validated/applied by the authority, then propagated via `state_delta`.
-  - Monitor latency (`ping` events) and adapt the UI (local prediction, smoothing) to reduce perceived impact.
+- Sender-owned behavior: each sender owns updates for its own movement and inventory messages.
+- Transfers are validated against the sender inventory (item existence and quantity checks).
+- Ordering & deduplication: each application message carries `seq` (per-sender monotonic counter). Receivers ignore any `seq` lower or equal to the last applied value for that sender.
+- Last-Writer-Wins (LWW): the latest `seq` per sender wins.
+- No echo relay: peers never re-broadcast application messages.
 
 ### Serialization / compression
 
@@ -260,7 +241,7 @@ Ordering & deduplication
     serialization: 'binary-min'
   });
   ```
-  Current minimal binary encodes JSON to UTF‑8 (`ArrayBuffer`). Hook is ready for CBOR/Flatbuffers later.
+  `binary-min` transports JSON payloads as UTF-8 `ArrayBuffer` (binary SCTP path on `RTCDataChannel`). The wire format is stable and future encoders (CBOR, FlatBuffers, MessagePack) may be added behind the same option.
 
 ### Rooms, full‑mesh and host migration
 
@@ -279,12 +260,14 @@ Use `WebSocketSignaling(localId, roomId, serverUrl)` to relay offers/answers/ICE
 const signaling = new WebSocketSignaling("playerA", "room-42", "ws://localhost:8787", { reconnect: true });
 ```
 
-When enabled, the client will reconnect with exponential backoff (base 1s, max 30s, 0–25% jitter), re-join the room and receive a fresh roster; the library clears peers on disconnect and resyncs state from the host when reconnected. Calling `signaling.close()` (e.g. when the user stops the game) disables any further reconnection. The default is `reconnect: false` so existing apps are unchanged.
+When enabled, the client will reconnect with exponential backoff (base 1s, max 30s, 0–25% jitter), re-join the room and receive a fresh roster; the library clears peers on disconnect and resyncs state from the host when reconnected. Calling `signaling.close()` (e.g. when the user stops the game) disables any further reconnection. The default is `reconnect: false` so existing apps are unchanged. You can override backoff with **`reconnectOptions`**: `{ baseMs: 1000, maxMs: 30000 }` (defaults; use positive values).
 
 **Room token (optional):** When your signaling server requires a room token (`REQUIRE_ROOM_TOKEN=1`), pass it in options so the client sends it on register:
 
 ```ts
 const signaling = new WebSocketSignaling("playerA", "room-42", "ws://localhost:8787", {
+  reconnect: true,
+  reconnectOptions: { baseMs: 1000, maxMs: 30000 }, // optional; defaults shown
   roomToken: "eyJhbGc...", // JWT from your auth backend
 });
 ```
@@ -301,7 +284,7 @@ The reference WS server (`examples/server/ws-server.mjs`) supports optional secu
 
 **Default (dev):** No token, no strict validation, server trusts client `from` for roster/relay. Suitable for local development and demos.
 
-**Token format (when `REQUIRE_ROOM_TOKEN=1`):** JWT signed with HS256. Expected claims: `sub` (string, player id), optionally `roomId` (string), `exp` (numeric timestamp). Secret is read from `ROOM_TOKEN_SECRET`. Generate the JWT with your auth backend (e.g. `jsonwebtoken` or Node `crypto.createHmac('sha256', secret)`); the server verifies signature and uses `sub` as session identity when `ENFORCE_SESSION_IDENTITY=1`.
+**Token format (when `REQUIRE_ROOM_TOKEN=1`):** JWT signed with HS256. Expected claims: `sub` (string, player id), optionally `roomId` (string), `exp` (numeric timestamp). Secret is read from `ROOM_TOKEN_SECRET`. Generate the JWT with your auth backend (e.g. `jsonwebtoken` or Node `crypto.createHmac('sha256', secret)`); the server verifies signature and uses `sub` as session identity when `ENFORCE_SESSION_IDENTITY=1`. If the JWT contains a `roomId` claim, it must match the register message’s `roomId` or the server rejects the register with `auth_required`.
 
 **Rejection behavior:** On register or envelope failure the server sends a single message `{ sys: 'error', code: 'auth_required' }` or `{ sys: 'error', code: 'invalid_envelope' }` then closes the connection. The client can handle `close`/error to show a message or attempt reconnection.
 
@@ -354,7 +337,7 @@ Comprehensive P2P multiplayer game demonstrating the library's core capabilities
 
 **Architecture showcase:**
 - **State management**: Comparison of sync strategies (delta vs full)
-- **Conflict resolution**: Choose between timestamp and authoritative modes (select before clicking Start)
+- **Consistency model**: Timestamp ordering with per-sender sequence deduplication
 - **Network topology**: Full-mesh P2P with deterministic host election
 - **Movement system**: Interpolation, extrapolation, and collision detection in action
 
@@ -364,7 +347,7 @@ Comprehensive P2P multiplayer game demonstrating the library's core capabilities
 - **Debugging**: Real-time event logging and network diagnostics
 - **Scalability**: Multi-player synchronization; configurable player limits
 
-See the "Local dev servers" section below for setup and usage instructions. In the demo UI, pick the strategy and mode, then click Start.
+See the "Local dev servers" section below for setup and usage instructions. In the demo UI, configure your room/player/signaling and click Start.
 
 ### Events
 
@@ -409,7 +392,6 @@ See the "Local dev servers" section below for setup and usage instructions. In t
 - If you want persistence (e.g., hit points), store it in your own state schema (e.g., `objects`) and broadcast a delta:
 
 ```ts
-// Host-only if you apply an authoritative model
 multiplayer.on("sharedPayload", (from, payload, channel) => {
   if (channel === "status" && payload && typeof payload === "object" && "hp" in (payload as any)) {
     // Write into global state
@@ -422,7 +404,6 @@ multiplayer.on("sharedPayload", (from, payload, channel) => {
 
 Notes:
 - The schema under `objects.*` is application-defined.
-- In `authoritative` mode, apply mutations on the host only.
 
 ### Useful scripts
 
@@ -465,7 +446,7 @@ Notes
 - Signaling: targeted (field `to`) via WS; `roster` is broadcast on each join/leave.
 - Full‑mesh: each peer establishes a DataChannel with all others (initiation: smaller id → larger id).
 - Host: deterministically elected; sends `state_full` on join and on migration.
-- Conflicts: LWW by `seq` (per sender) or `authoritative` (host).
+- Consistency: LWW by `seq` (per sender).
 - Sync: frequent deltas, occasional full (hybrid = combined usage).
 
 ### License

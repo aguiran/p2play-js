@@ -5,7 +5,7 @@ import { NetMessage } from '../src/types';
 
 function makeSM() {
   const bus = new EventBus();
-  const sm = new StateManager(bus, 'timestamp', () => undefined, () => [], () => 'ME');
+  const sm = new StateManager(bus, 'timestamp', () => 'ME');
   return { bus, sm };
 }
 

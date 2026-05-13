@@ -15,6 +15,14 @@
       #log { white-space: pre-wrap; font-size: 12px; background: #111; padding: 8px; height: 160px; overflow: auto; }
       .pill { display: inline-block; padding: 2px 6px; background: #333; border-radius: 6px; margin-left: 6px; }
       a, a:hover{color:#eee}
+      .toolbar { display: flex; gap: 6px; flex-wrap: wrap; }
+      .toolbar button { width: auto; flex: 1; font-size: 12px; padding: 4px 6px; }
+      .toggle-row { display: flex; align-items: center; gap: 8px; }
+      .toggle-row input[type=checkbox] { width: auto; }
+      #chatRow { display: flex; gap: 4px; }
+      #chatRow input { flex: 1; }
+      #chatRow button { width: auto; padding: 6px 12px; }
+      .peer-pings { font-size: 11px; color: #aaa; margin-top: 4px; }
     </style>
   </head>
   <body>
@@ -28,13 +36,6 @@
         <input id="pid" value="P1" />
       </div>
       <div class="row">
-        <label>Conflict Resolution</label>
-        <select id="conf">
-          <option value="timestamp" selected>timestamp</option>
-          <option value="authoritative">authoritative</option>
-        </select>
-      </div>
-      <div class="row">
         <label>Signaling Server</label>
         <input id="signaling" value="ws://localhost:8787" placeholder="ws://localhost:8787" />
         <small style="color: #999; font-size: 11px;">For testing with public server, use: wss://wss.getlost.ovh</small>
@@ -42,11 +43,21 @@
       <div class="row">
         <button id="start">Start</button>
       </div>
-      <div class="row">
-        <button id="givePotion">Give potion to random peer</button>
+      <div class="row toolbar">
+        <button id="givePotion">Give potion</button>
+        <button id="syncState">Sync full state</button>
+      </div>
+      <div class="row" id="chatRow">
+        <input id="chatInput" placeholder="Send message to all..." disabled />
+        <button id="chatSend" disabled>Send</button>
+      </div>
+      <div class="row toggle-row">
+        <input type="checkbox" id="pingToggle" checked />
+        <label for="pingToggle" style="margin:0;font-weight:400;">Ping overlay</label>
       </div>
       <div class="row">
         <div>Host: <span id="host" class="pill">-</span></div>
+        <div class="peer-pings" id="peerPings"></div>
       </div>
       <div id="log"></div>
       <div class="row">Find <a href="http://www.getlost.ovh/?utm_source=complete" target="_blank">full documentation here</a> and <a href="https://github.com/aguiran/p2play-js" target="_blank">Github Repo here</a>.</div>
@@ -72,6 +83,7 @@
       const connected = new Set();
       let myPos = { x: 50, y: 50, z: 0 };
       let myVel = { x: 0, y: 0, z: 0 };
+      const peerPings = {};
 
       const keys = new Set();
       window.addEventListener('keydown', (e) => keys.add(e.code));
@@ -108,17 +120,12 @@
 
       function update(dt) {
         if (!multiplayer) return;
-        const authoritative = document.getElementById('conf').value === 'authoritative';
-        const isHost = multiplayer.getHostId && multiplayer.getHostId() === id;
-        const canMove = !authoritative || isHost;
         const speed = 200;
         const v = { x: 0, y: 0, z: 0 };
-        if (canMove) {
-          if (keys.has('ArrowUp') || keys.has('KeyW')) v.y -= 1;
-          if (keys.has('ArrowDown') || keys.has('KeyS')) v.y += 1;
-          if (keys.has('ArrowLeft') || keys.has('KeyA')) v.x -= 1;
-          if (keys.has('ArrowRight') || keys.has('KeyD')) v.x += 1;
-        }
+        if (keys.has('ArrowUp') || keys.has('KeyW')) v.y -= 1;
+        if (keys.has('ArrowDown') || keys.has('KeyS')) v.y += 1;
+        if (keys.has('ArrowLeft') || keys.has('KeyA')) v.x -= 1;
+        if (keys.has('ArrowRight') || keys.has('KeyD')) v.x += 1;
         const len = Math.hypot(v.x, v.y) || 1;
         v.x = v.x/len * speed; v.y = v.y/len * speed;
         myPos.x += v.x * dt;
@@ -132,23 +139,47 @@
         const dt = (now - last) / 1000; last = now;
         update(dt);
         multiplayer?.tick(now);
+        const st = multiplayer?.getState();
+        if (st?.players[id]) {
+          myPos.x = st.players[id].position.x;
+          myPos.y = st.players[id].position.y;
+        }
         draw();
         requestAnimationFrame(loop);
+      }
+
+      function renderPeerPings() {
+        const el = document.getElementById('peerPings');
+        const entries = Object.entries(peerPings)
+          .filter(([pid]) => pid !== id)
+          .map(([pid, ms]) => `${pid}: ${ms}ms`);
+        el.textContent = entries.length ? entries.join(' | ') : '';
       }
 
       document.getElementById('start').onclick = async () => {
         id = document.getElementById('pid').value || 'P1';
         const roomId = document.getElementById('room').value || 'complete-room';
-        const conf = document.getElementById('conf').value;
-
         const signalingUrl = document.getElementById('signaling').value || 'ws://localhost:8787';
+
+        const signaling = new WebSocketSignaling(id, roomId, signalingUrl, {
+          reconnect: true,
+          reconnectOptions: { baseMs: 1000, maxMs: 15000 },
+          onError(code) {
+            log(`[signaling error] ${code}`);
+          },
+        });
+
         multiplayer = new P2PGameLibrary({
           maxPlayers: 8,
-          conflictResolution: conf,
-          pingOverlay: { enabled: true, position: 'top-right', canvas: null },
-          signaling: new WebSocketSignaling(id, roomId, signalingUrl, { reconnect: true }),
-          authoritativeClientId: undefined,
-          roomId,
+          cleanupOnPeerLeave: true,
+          pingOverlay: { enabled: true, position: 'top-right' },
+          movement: {
+            maxSpeed: 300,
+            smoothing: 0.15,
+            extrapolationMs: 200,
+          },
+          backpressure: { strategy: 'drop-moves' },
+          signaling,
           debug: {
             enabled: true,
             onSend(info) {
@@ -156,34 +187,69 @@
             }
           }
         });
+
         await multiplayer.start();
         connected.clear();
         connected.add(id);
         myPos = { x: 50, y: 50, z: 0 };
         myVel = { x: 0, y: 0, z: 0 };
-        // announce presence so that remote peers render us even before moving
+        Object.keys(peerPings).forEach(k => delete peerPings[k]);
+
         multiplayer.announcePresence(id, { x: 50, y: 50, z: 0 });
-        multiplayer.on('hostChange', (host) => { document.getElementById('host').textContent = host; });
-        if (conf === 'authoritative') {
-          const info = document.createElement('div');
-          info.textContent = 'Authoritative mode: only the host can move their player.';
-          log(info.textContent);
-        }
-        multiplayer.on('peerJoin', (pid) => { connected.add(pid); log(`peerJoin: ${pid}`); });
-        multiplayer.on('peerLeave', (pid) => { connected.delete(pid); log(`peerLeave: ${pid}`); });
+
+        multiplayer.on('hostChange', (host) => {
+          document.getElementById('host').textContent = host;
+        });
+
+        multiplayer.on('peerJoin', (pid) => {
+          connected.add(pid);
+          log(`peerJoin: ${pid}`);
+          multiplayer.announcePresence(id, myPos);
+        });
+        multiplayer.on('peerLeave', (pid) => {
+          connected.delete(pid);
+          delete peerPings[pid];
+          renderPeerPings();
+          log(`peerLeave: ${pid}`);
+        });
+
+        multiplayer.on('ping', (pid, ms) => {
+          peerPings[pid] = ms;
+          renderPeerPings();
+        });
+
+        multiplayer.on('maxCapacityReached', (max) => {
+          log(`[capacity] max players reached (${max})`);
+        });
+
         multiplayer.on('inventoryUpdate', (pid, items) => {
           const mine = pid === id ? ' (me)' : '';
           log(`inventoryUpdate: ${pid}${mine} -> ${items.map(i=>i.id+"x"+i.quantity).join(', ')}`);
         });
+
         multiplayer.on('objectTransfer', (from, to, item) => {
           log(`objectTransfer: ${from} -> ${to}: ${item.id} x${item.quantity}`);
         });
+
         multiplayer.on('stateSync', (state) => {
           try { log(`stateSync: players=[${Object.keys(state.players).join(', ')}]`); } catch {}
         });
+
         multiplayer.on('stateDelta', (delta) => {
           try { log(`stateDelta: tick=${delta.tick} changes=${delta.changes.length}`); } catch {}
         });
+
+        multiplayer.on('sharedPayload', (from, payload, channel) => {
+          if (channel === 'chat') {
+            log(`[chat] ${from}: ${payload}`);
+          } else {
+            log(`[payload] from=${from} channel=${channel ?? 'default'} data=${JSON.stringify(payload)}`);
+          }
+        });
+
+        document.getElementById('chatInput').disabled = false;
+        document.getElementById('chatSend').disabled = false;
+
         loop();
       };
 
@@ -197,7 +263,31 @@
         multiplayer.transferItem(id, to, { id: 'potion', type: 'heal', quantity: 1 });
         log(`transfer potion from ${id} to ${to}`);
       };
+
+      document.getElementById('syncState').onclick = () => {
+        if (!multiplayer) return;
+        multiplayer.broadcastFullState(id);
+        log('[manual] broadcast full state');
+      };
+
+      function sendChat() {
+        const input = document.getElementById('chatInput');
+        const text = input.value.trim();
+        if (!text || !multiplayer) return;
+        multiplayer.broadcastPayload(id, text, 'chat');
+        log(`[chat] ${id}: ${text}`);
+        input.value = '';
+      }
+
+      document.getElementById('chatSend').onclick = sendChat;
+      document.getElementById('chatInput').onkeypress = (e) => {
+        if (e.key === 'Enter') sendChat();
+      };
+
+      document.getElementById('pingToggle').onchange = (e) => {
+        if (!multiplayer) return;
+        multiplayer.setPingOverlayEnabled(e.target.checked);
+      };
     </script>
   </body>
   </html>
-

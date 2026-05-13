@@ -232,6 +232,25 @@ describe('ws-server REQUIRE_ROOM_TOKEN', () => {
     expect(roster?.roster).toContain('Alice');
     client.close();
   });
+
+  it('rejects register when token roomId does not match message roomId', async () => {
+    const url = `ws://localhost:${TOKEN_PORT}`;
+    const token = signJWT({ sub: 'Alice', roomId: 'roomA', exp: Math.floor(Date.now() / 1000) + 60 }, SECRET);
+    const client = new WebSocket(url);
+    const received: any[] = [];
+    client.on('message', (raw) => received.push(JSON.parse(raw.toString())));
+    await new Promise<void>((res) => client.on('open', () => res()));
+    client.send(JSON.stringify({
+      roomId: 'roomB',
+      from: 'Alice',
+      announce: true,
+      kind: 'register',
+      roomToken: token,
+    }));
+    await new Promise((r) => setTimeout(r, 150));
+    expect(received.some((m) => m.sys === 'error' && m.code === 'auth_required')).toBe(true);
+    client.close();
+  });
 });
 
 describe('ws-server REQUIRE_ROOM_TOKEN + ENFORCE_SESSION_IDENTITY', () => {

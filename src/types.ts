@@ -1,10 +1,9 @@
-export type ConflictResolution = "timestamp" | "authoritative";
+export type ConflictResolution = "timestamp";
 export type SerializationStrategy = "json" | "binary-min";
 
 export interface GameLibOptions {
   maxPlayers?: number;
   conflictResolution?: ConflictResolution;
-  authoritativeClientId?: string;
   serialization?: SerializationStrategy;
   iceServers?: RTCIceServer[]; // STUN/TURN configuration
   cleanupOnPeerLeave?: boolean; // if true and we are host: remove leaving player and broadcast state
@@ -17,6 +16,8 @@ export interface GameLibOptions {
   };
   /** Movement system configuration (interpolation/extrapolation) */
   movement?: MovementOptions;
+  /** Override P2P timing (offer timeout, ping interval). Defaults from internal constants if omitted. Use positive values. */
+  timing?: PeerTimingOptions;
 }
 
 export interface SendDebugInfo {
@@ -44,6 +45,16 @@ export type BackpressureStrategy = "off" | "drop-moves" | "coalesce-moves";
 export interface BackpressureOptions {
   strategy?: BackpressureStrategy;
   thresholdBytes?: number; // bufferedAmount threshold triggering the strategy (default: 262144 = 256KB)
+}
+
+/**
+ * P2P timing overrides. Use positive values.
+ */
+export interface PeerTimingOptions {
+  /** Timeout for pending WebRTC offer (ms). Default: 30000. */
+  pendingOfferTimeoutMs?: number;
+  /** Interval between P2P ping messages (ms). Default: 2000. */
+  pingIntervalMs?: number;
 }
 
 export type PlayerId = string;

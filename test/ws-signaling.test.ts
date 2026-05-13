@@ -47,7 +47,12 @@ describe('WebSocketSignaling', () => {
   beforeEach(() => { instances = installFakeWS(); });
   afterEach(() => { delete (globalThis as any).WebSocket; });
 
-  function createSignaling(opts?: { reconnect?: boolean }) {
+  function createSignaling(opts?: {
+    reconnect?: boolean;
+    roomToken?: string;
+    onError?: (code: string) => void;
+    reconnectOptions?: { baseMs?: number; maxMs?: number };
+  }) {
     const sig = new WebSocketSignaling('P1', 'room42', 'ws://fake', opts);
     const ws = instances[instances.length - 1];
     ws._open();
@@ -265,5 +270,72 @@ describe('WebSocketSignaling', () => {
     expect(ws2.sent.some((s) => JSON.parse(s).kind === 'register')).toBe(true);
     sig.close();
     vi.useRealTimers();
+  });
+
+  it('uses custom reconnectOptions baseMs and maxMs when provided', async () => {
+    vi.useFakeTimers();
+    const setTimeoutSpy = vi.spyOn(globalThis, 'setTimeout');
+    const sig = new WebSocketSignaling('P1', 'room42', 'ws://fake', {
+      reconnect: true,
+      reconnectOptions: { baseMs: 500, maxMs: 5000 },
+    });
+    const ws = instances[instances.length - 1];
+    ws._open();
+    await sig.register();
+
+    ws.close();
+
+    const reconnectDelayCalls = setTimeoutSpy.mock.calls.filter(
+      (c) => typeof c[1] === 'number' && c[1] >= 500 && c[1] <= 500 * 1.25 + 1
+    );
+    expect(reconnectDelayCalls.length).toBeGreaterThanOrEqual(1);
+    expect(reconnectDelayCalls[0][1]).toBeGreaterThanOrEqual(500);
+    expect(reconnectDelayCalls[0][1]).toBeLessThanOrEqual(625 + 1);
+
+    sig.close();
+    setTimeoutSpy.mockRestore();
+    vi.useRealTimers();
+  });
+
+  it('calls onError for auth_required and does not route to desc/ice/roster handlers', async () => {
+    const onError = vi.fn();
+    const { sig, ws } = createSignaling({ onError });
+    const desc = vi.fn();
+    const ice = vi.fn();
+    const roster = vi.fn();
+    sig.onRemoteDescription(desc);
+    sig.onIceCandidate(ice);
+    sig.onRoster(roster);
+
+    ws._receive(JSON.stringify({
+      sys: 'error', roomId: 'room42', code: 'auth_required'
+    }));
+
+    expect(onError).toHaveBeenCalledWith('auth_required');
+    expect(desc).not.toHaveBeenCalled();
+    expect(ice).not.toHaveBeenCalled();
+    expect(roster).not.toHaveBeenCalled();
+    sig.close();
+  });
+
+  it('calls onError for invalid_envelope and ignores protocol handlers', async () => {
+    const onError = vi.fn();
+    const { sig, ws } = createSignaling({ onError });
+    const desc = vi.fn();
+    const ice = vi.fn();
+    const roster = vi.fn();
+    sig.onRemoteDescription(desc);
+    sig.onIceCandidate(ice);
+    sig.onRoster(roster);
+
+    ws._receive(JSON.stringify({
+      sys: 'error', roomId: 'room42', code: 'invalid_envelope'
+    }));
+
+    expect(onError).toHaveBeenCalledWith('invalid_envelope');
+    expect(desc).not.toHaveBeenCalled();
+    expect(ice).not.toHaveBeenCalled();
+    expect(roster).not.toHaveBeenCalled();
+    sig.close();
   });
 });

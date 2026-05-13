@@ -24,7 +24,7 @@ describe('MovementSystem more branches', () => {
     expect(state.players.A.position.x).toBe(50);
   });
 
-  it('resolves 2D collision without z coordinate', () => {
+  it('resolves 2D collision by pushing only local player', () => {
     const bus = new EventBus();
     const state = {
       players: {
@@ -32,10 +32,10 @@ describe('MovementSystem more branches', () => {
         B: { id: 'B', position: { x: 0.5, y: 0 } }
       }, inventories: {}, objects: {}, tick: 0
     } as any;
-    const ms = new MovementSystem(bus, () => state, { playerRadius: 5 });
+    const ms = new MovementSystem(bus, () => state, { playerRadius: 5 }, () => 'A');
     ms.resolveCollisions();
-    const dist = Math.abs(state.players.B.position.x - state.players.A.position.x);
-    expect(dist).toBeGreaterThanOrEqual(10 - 0.01);
+    expect(state.players.A.position.x).toBeLessThan(0);
+    expect(state.players.B.position.x).toBe(0.5);
   });
 
   it('does not extrapolate when allowedDtSec is zero', () => {
@@ -51,17 +51,19 @@ describe('MovementSystem more branches', () => {
     expect(state.players.A.position.x).toBe(5);
   });
 
-  it('integrates Z and resolves simple 3D collisions', () => {
+  it('integrates Z and resolves 3D collision by pushing local player', () => {
     const bus = new EventBus();
     const state = { players: { A: { id: 'A', position: { x: 0, y: 0, z: 0 }, velocity: { x: 10000, y: 0, z: 10000 } }, B: { id: 'B', position: { x: 1, y: 0, z: 0 } } }, inventories: {}, objects: {}, tick: 0 } as any;
-    const ms = new MovementSystem(bus, () => state, { maxSpeed: 10, smoothing: 1, extrapolationMs: 1000, worldBounds: { width: 100, height: 100, depth: 100 }, playerRadius: 1 });
+    const ms = new MovementSystem(bus, () => state, { maxSpeed: 10, smoothing: 1, extrapolationMs: 1000, worldBounds: { width: 100, height: 100, depth: 100 }, playerRadius: 1 }, () => 'A');
     bus.emit('playerMove', 'A');
     const t0 = performance.now();
     ms.interpolate(t0 + 100);
     expect(state.players.A.position.z!).toBeGreaterThan(0);
     expect(state.players.A.position.z!).toBeLessThanOrEqual(100);
+    const bBefore = { ...state.players.B.position };
     state.players.B.position = { x: state.players.A.position.x, y: state.players.A.position.y, z: state.players.A.position.z } as any;
     ms.resolveCollisions();
+    expect(state.players.B.position.x).toBe(state.players.A.position.x + (state.players.B.position.x - state.players.A.position.x));
     const dx = state.players.B.position.x - state.players.A.position.x;
     const dy = state.players.B.position.y - state.players.A.position.y;
     const dz = (state.players.B.position.z ?? 0) - (state.players.A.position.z ?? 0);

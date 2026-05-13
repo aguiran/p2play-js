@@ -7,6 +7,7 @@ import { createHmac } from 'crypto';
  * Optional security (env, all off by default):
  * - ENFORCE_SESSION_IDENTITY=1: overwrite msg.from with session identity when relaying.
  * - REQUIRE_ROOM_TOKEN=1: require valid JWT at register (ROOM_TOKEN_SECRET must be set).
+ *   If the JWT contains a roomId claim, it must match the message's roomId or the register is rejected.
  * - STRICT_ENVELOPES=1: reject invalid message shape.
  *
  * Envelope schema (when STRICT_ENVELOPES=1):
@@ -98,7 +99,7 @@ wss.on('connection', (ws, req) => {
     if (!msg || typeof msg !== 'object') return;
     const { roomId, kind, from, to, announce } = msg;
     if (strictEnvelopes) {
-      const room = roomId ? getRoom(roomId) : null;
+      const room = roomId ? (rooms.get(roomId) ?? null) : null;
       const isRegister = room ? !room.sockets.has(ws) : true;
       if (!validateEnvelope(msg, isRegister)) {
         sendErrorAndClose(ws, 'invalid_envelope');
@@ -120,6 +121,10 @@ wss.on('connection', (ws, req) => {
         }
         const payload = verifyRoomToken(token, roomTokenSecret);
         if (!payload) {
+          sendErrorAndClose(ws, 'auth_required');
+          return;
+        }
+        if (payload.roomId != null && payload.roomId !== '' && String(payload.roomId) !== String(roomId)) {
           sendErrorAndClose(ws, 'auth_required');
           return;
         }

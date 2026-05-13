@@ -15,11 +15,12 @@
   "scripts": {
     "build": "tsc -p tsconfig.json",
     "clean": "rm -rf dist",
+    "lint": "tsc --noEmit",
     "serve:ws": "node examples/server/ws-server.mjs",
     "serve:http": "node examples/server/http-server.cjs",
     "test": "vitest run",
     "coverage": "vitest run --coverage",
-    "prepublishOnly": "npm run clean && npm run build"
+    "prepublishOnly": "npm run clean && npm run build && npm test"
   },
   "keywords": [
     "webrtc",
@@ -55,7 +56,8 @@
   "files": [
     "dist",
     "README.md",
-    "LICENSE"
+    "LICENSE",
+    "CHANGELOG.md"
   ],
   "publishConfig": {
     "access": "public",

@@ -60,12 +60,18 @@ describe('isValidNetMessage', () => {
   it('rejects transfer with null item', () => {
     expect(isValidNetMessage({ t: 'transfer', from: 'A', ts: 1, to: 'B', item: null })).toBe(false);
   });
+  it('rejects transfer with item missing type', () => {
+    expect(isValidNetMessage({ t: 'transfer', from: 'A', ts: 1, to: 'B', item: { id: 'i1', quantity: 1 } })).toBe(false);
+  });
+  it('rejects transfer with item type non-string', () => {
+    expect(isValidNetMessage({ t: 'transfer', from: 'A', ts: 1, to: 'B', item: { id: 'i1', type: 42, quantity: 1 } })).toBe(false);
+  });
 });
 
 describe('StateManager handleNetMessage with invalid messages', () => {
   it('does not crash and does not apply invalid message', () => {
     const bus = new EventBus();
-    const sm = new StateManager(bus, 'timestamp', () => undefined, () => [], () => 'LOCAL');
+    const sm = new StateManager(bus, 'timestamp', () => 'LOCAL');
     let playerMoveCount = 0;
     bus.on('playerMove', () => { playerMoveCount++; });
 
@@ -79,7 +85,7 @@ describe('StateManager handleNetMessage with invalid messages', () => {
 
   it('still applies valid messages after invalid ones', () => {
     const bus = new EventBus();
-    const sm = new StateManager(bus, 'timestamp', () => undefined, () => [], () => 'LOCAL');
+    const sm = new StateManager(bus, 'timestamp', () => 'LOCAL');
     sm.handleNetMessage({} as any);
     sm.handleNetMessage({ t: 'move', from: 'P1', ts: 1, seq: 1, position: { x: 10, y: 20 } } as any);
     expect(sm.getState().players['P1'].position).toEqual({ x: 10, y: 20 });
@@ -90,7 +96,7 @@ describe('StateManager debug mode traces rejected messages', () => {
   it('calls console.debug when debug.enabled and message is rejected by guard', () => {
     const spy = vi.spyOn(console, 'debug').mockImplementation(() => {});
     const bus = new EventBus();
-    const sm = new StateManager(bus, 'timestamp', () => undefined, () => [], () => 'LOCAL', { enabled: true });
+    const sm = new StateManager(bus, 'timestamp', () => 'LOCAL', { enabled: true });
 
     sm.handleNetMessage({} as any);
     sm.handleNetMessage({ t: 'move', from: 'A' } as any);
@@ -105,7 +111,7 @@ describe('StateManager debug mode traces rejected messages', () => {
   it('does not call console.debug when debug is not enabled', () => {
     const spy = vi.spyOn(console, 'debug').mockImplementation(() => {});
     const bus = new EventBus();
-    const sm = new StateManager(bus, 'timestamp', () => undefined, () => [], () => 'LOCAL');
+    const sm = new StateManager(bus, 'timestamp', () => 'LOCAL');
 
     sm.handleNetMessage({} as any);
 
@@ -116,7 +122,7 @@ describe('StateManager debug mode traces rejected messages', () => {
   it('includes t and from fields in the debug output', () => {
     const spy = vi.spyOn(console, 'debug').mockImplementation(() => {});
     const bus = new EventBus();
-    const sm = new StateManager(bus, 'timestamp', () => undefined, () => [], () => 'LOCAL', { enabled: true });
+    const sm = new StateManager(bus, 'timestamp', () => 'LOCAL', { enabled: true });
 
     sm.handleNetMessage({ t: 'unknown_type', from: 'X', ts: 1 } as any);
 
