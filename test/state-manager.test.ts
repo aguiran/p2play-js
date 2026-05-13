@@ -27,6 +27,54 @@ describe('StateManager', () => {
     sm.handleNetMessage(m2);
     expect(sm.getState().players['P1'].position).toEqual({ x: 2, y: 2 });
   });
+
+  it('applies inventory snapshots for non-local peers in full state', () => {
+    const sm = makeStateManager();
+    const full: NetMessage = {
+      t: 'state_full',
+      from: 'HOST',
+      ts: 1,
+      state: {
+        players: {
+          LOCAL: { id: 'LOCAL', position: { x: 0, y: 0 } },
+          P2: { id: 'P2', position: { x: 3, y: 4 } },
+        },
+        inventories: {
+          LOCAL: [{ id: 'local-item', type: 'debug', quantity: 1 }],
+          P2: [{ id: 'potion', type: 'heal', quantity: 2 }],
+        },
+        objects: {},
+        tick: 3,
+      },
+    } as any;
+
+    sm.handleNetMessage(full);
+    expect(sm.getState().inventories.P2).toEqual([{ id: 'potion', type: 'heal', quantity: 2 }]);
+  });
+
+  it('does not emit move/inventory/transfer when resolver rejects', () => {
+    const bus = new EventBus();
+    const sm = new StateManager(bus, 'timestamp', () => 'LOCAL');
+    let moveFired = false;
+    let invFired = false;
+    let transferFired = false;
+    bus.on('playerMove', () => { moveFired = true; });
+    bus.on('inventoryUpdate', () => { invFired = true; });
+    bus.on('objectTransfer', () => { transferFired = true; });
+
+    const resolver = (sm as any).resolver;
+    resolver.resolveMove = () => false;
+    resolver.resolveInventory = () => false;
+    resolver.resolveTransfer = () => false;
+
+    sm.handleNetMessage({ t: 'move', from: 'P1', ts: 1, seq: 1, position: { x: 99, y: 99 } } as any);
+    sm.handleNetMessage({ t: 'inventory', from: 'P1', ts: 2, seq: 2, items: [{ id: 'potion', type: 'heal', quantity: 1 }] } as any);
+    sm.handleNetMessage({ t: 'transfer', from: 'P1', to: 'P2', ts: 3, seq: 3, item: { id: 'potion', type: 'heal', quantity: 1 } } as any);
+
+    expect(moveFired).toBe(false);
+    expect(invFired).toBe(false);
+    expect(transferFired).toBe(false);
+  });
 });
 
 describe('StateManager consistency behavior', () => {
@@ -84,6 +132,12 @@ describe('StateManager applyFullState with inventories', () => {
 });
 
 describe('StateManager prepareForResync', () => {
+  it('is a no-op when local id is undefined', () => {
+    const bus = new EventBus();
+    const sm = new StateManager(bus, 'timestamp', () => undefined);
+    expect(() => sm.prepareForResync()).not.toThrow();
+  });
+
   it('after prepareForResync, next state_full updates local player', () => {
     const bus = new EventBus();
     const sm = new StateManager(bus, 'timestamp', () => 'LOCAL');
