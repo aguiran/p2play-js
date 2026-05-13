@@ -1,0 +1,31 @@
+codecov:
+  require_ci_to_pass: true
+  notify:
+    after_n_builds: 1
+
+coverage:
+  precision: 2
+  round: down
+  range: "70...100"
+
+comment:
+  layout: "reach,diff,flags,tree"
+  behavior: default
+  require_changes: true
+
+ignore:
+  - "examples/**"
+  - "dist/**"
+  - "**/*.d.ts"
+
+status:
+  project:
+    default:
+      target: auto
+      threshold: "0.20%"
+      informational: false
+  patch:
+    default:
+      target: "100%"
+      threshold: "0%"
+      informational: false
