@@ -98,7 +98,8 @@ describe('P2PGameLibrary API — state & delta', () => {
     const { game, peerB } = await setupWithPeer();
     game.broadcastDelta('A', ['objects.foo']);
     const msgs = getSent(peerB.dcReliable);
-    const delta = msgs.find(m => m.t === 'state_delta');
+    // Filter by path: the host also emits a players.<id> delta on peerJoin.
+    const delta = msgs.find(m => m.t === 'state_delta' && m.delta?.changes?.[0]?.path === 'objects.foo');
     expect(delta).toBeDefined();
     expect(delta.delta.changes[0].path).toBe('objects.foo');
     game.stop();

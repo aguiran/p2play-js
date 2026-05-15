@@ -72,19 +72,36 @@ export class P2PGameLibrary {
       }
     }));
 
-    // When a peer joins, hydrate it with our full state (host only, after hostChange)
+    // Host: insert joiner into state.players (so the host's own UI is not
+    // stuck at N-1), send a state_full to the joiner, and emit stateDelta
+    // locally for the host's listeners. The delta is intentionally NOT
+    // broadcast: <peerId> is the sender-owned authority for its own
+    // players.<peerId> path, and a host-broadcast snapshot at {0,0} would
+    // race with the joiner's announcePresence on the unreliable channel
+    // (overwriting the real position on other peers).
     this.unsubs.push(this.bus.on("peerJoin", (peerId: PlayerId) => {
       // micro-task to let hostChange propagate first
       setTimeout(() => {
+        if (this.disposed) return;
         const hostIdNow = this.peers.getHostId();
-        if (hostIdNow && hostIdNow === this.localId) {
-          const msg: FullStateMessage = {
-            t: "state_full",
-            from: this.localId,
-            ts: performance.now(),
-            state: this.state.getState(),
-          };
-          this.peers.send(peerId, msg);
+        if (!hostIdNow || hostIdNow !== this.localId) return;
+        // Peer may have disconnected before this deferred task runs.
+        if (!this.peers.getPeer(peerId)) return;
+        const st = this.state.getState();
+        const isNewPlayer = !st.players[peerId];
+        if (isNewPlayer) {
+          st.players[peerId] = { id: peerId, position: { x: 0, y: 0 } };
+        }
+        const fullMsg: FullStateMessage = {
+          t: "state_full",
+          from: this.localId,
+          ts: performance.now(),
+          state: this.state.getState(),
+        };
+        this.peers.send(peerId, fullMsg);
+        if (isNewPlayer) {
+          const delta = this.state.buildDeltaFromPaths([`players.${peerId}`]);
+          this.bus.emit("stateDelta", delta);
         }
       }, 0);
     }));
@@ -139,8 +156,9 @@ export class P2PGameLibrary {
   }
 
   /**
-   * Convenience: mutate local state at given paths and broadcast the corresponding delta.
-   * Returns the computed paths used for the delta.
+   * Mutate local state at the given paths and broadcast the corresponding delta.
+   * The local sender receives a `stateDelta` event too. Returns the paths used
+   * for the delta.
    */
   setStateAndBroadcast(selfId: PlayerId, changes: Array<{ path: string; value: unknown }>): string[] {
     if (this.disposed) throw new Error("P2PGameLibrary has been disposed");
@@ -153,48 +171,46 @@ export class P2PGameLibrary {
   // Movement API
   broadcastMove(selfId: PlayerId, position: { x: number; y: number }, velocity?: { x: number; y: number }) {
     if (this.disposed) throw new Error("P2PGameLibrary has been disposed");
-    const st = this.state.getState();
-    const player = (st.players[selfId] = st.players[selfId] ?? { id: selfId, position: { x: 0, y: 0 } });
-    player.position = { ...player.position, ...position };
-    if (velocity) player.velocity = { ...player.velocity, ...velocity };
     const msg: MoveMessage = { t: "move", from: selfId, ts: performance.now(), seq: this.nextSeq(selfId), position, velocity };
-    this.peers.broadcast(msg);
+    this.applyLocalAndBroadcast(msg);
   }
 
   // Presence API: ensure local player exists (or update position) and broadcast a move to announce presence
   announcePresence(selfId: PlayerId, position: { x: number; y: number } = { x: 0, y: 0 }) {
     if (this.disposed) throw new Error("P2PGameLibrary has been disposed");
-    const st = this.state.getState();
-    const player = (st.players[selfId] = st.players[selfId] ?? { id: selfId, position: { x: 0, y: 0 } });
-    player.position = { ...player.position, ...position };
-    const msg: MoveMessage = { t: "move", from: selfId, ts: performance.now(), position };
-    this.peers.broadcast(msg);
+    const msg: MoveMessage = { t: "move", from: selfId, ts: performance.now(), seq: this.nextSeq(selfId), position };
+    this.applyLocalAndBroadcast(msg);
   }
 
   // Inventory API
   updateInventory(selfId: PlayerId, items: InventoryItem[], options?: SendOptions) {
     if (this.disposed) throw new Error("P2PGameLibrary has been disposed");
     const msg: InventoryUpdateMessage = { t: "inventory", from: selfId, ts: performance.now(), seq: this.nextSeq(selfId), items };
-    this.peers.broadcast(msg, options);
+    this.applyLocalAndBroadcast(msg, options);
   }
 
   // Transfer API
   transferItem(selfId: PlayerId, to: PlayerId, item: InventoryItem, options?: SendOptions) {
     if (this.disposed) throw new Error("P2PGameLibrary has been disposed");
     const msg: ObjectTransferMessage = { t: "transfer", from: selfId, ts: performance.now(), seq: this.nextSeq(selfId), to, item };
-    this.peers.broadcast(msg, options);
+    this.applyLocalAndBroadcast(msg, options);
   }
 
   // Generic payload sharing API (broadcast)
   broadcastPayload(selfId: PlayerId, payload: unknown, channel?: string, options?: SendOptions) {
     if (this.disposed) throw new Error("P2PGameLibrary has been disposed");
     const msg: SharedPayloadMessage = { t: "payload", from: selfId, ts: performance.now(), seq: this.nextSeq(selfId), payload, channel };
-    this.peers.broadcast(msg, options);
+    this.applyLocalAndBroadcast(msg, options);
   }
 
   // Generic payload sharing API (targeted)
   sendPayload(selfId: PlayerId, to: PlayerId, payload: unknown, channel?: string, options?: SendOptions) {
     if (this.disposed) throw new Error("P2PGameLibrary has been disposed");
+    // No DataChannel to self: emit locally instead of dropping silently.
+    if (to === this.localId) {
+      this.bus.emit("sharedPayload", selfId, payload, channel);
+      return;
+    }
     const msg: SharedPayloadMessage = { t: "payload", from: selfId, ts: performance.now(), seq: this.nextSeq(selfId), payload, channel };
     this.peers.send(to, msg, options);
   }
@@ -203,7 +219,10 @@ export class P2PGameLibrary {
   broadcastFullState(selfId: PlayerId) {
     if (this.disposed) throw new Error("P2PGameLibrary has been disposed");
     const msg: FullStateMessage = { t: "state_full", from: selfId, ts: performance.now(), seq: this.nextSeq(selfId), state: this.state.getState() };
+    // Broadcast first: peers.broadcast() serializes the msg synchronously,
+    // so listeners on the local emit cannot mutate the wire payload.
     this.peers.broadcast(msg);
+    this.bus.emit("stateSync", this.state.getState());
   }
 
   broadcastDelta(selfId: PlayerId, paths: string[]) {
@@ -211,6 +230,18 @@ export class P2PGameLibrary {
     const delta = this.state.buildDeltaFromPaths(paths);
     const msg: DeltaStateMessage = { t: "state_delta", from: selfId, ts: performance.now(), seq: this.nextSeq(selfId), delta };
     this.peers.broadcast(msg);
+    this.bus.emit("stateDelta", delta);
+  }
+
+  /**
+   * Apply a locally-originated NetMessage to the StateManager (mutating state
+   * and emitting the corresponding event) and broadcast it to peers. Local
+   * application goes through the same path as remote messages. The broadcast
+   * runs before handleNetMessage so listeners cannot mutate the wire payload.
+   */
+  private applyLocalAndBroadcast(msg: NetMessage, options?: SendOptions) {
+    this.peers.broadcast(msg, options);
+    this.state.handleNetMessage(msg);
   }
 
   setPingOverlayEnabled(enabled: boolean) {

@@ -7,7 +7,7 @@ Modular TypeScript library to build browser-based P2P (WebRTC) multiplayer games
 [![npm version](https://img.shields.io/npm/v/@p2play-js/p2p-game.svg)](https://www.npmjs.com/package/@p2play-js/p2p-game)
 [![license: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](./LICENSE)
 [![codecov](https://codecov.io/gh/aguiran/p2play-js/graph/badge.svg)](https://codecov.io/gh/aguiran/p2play-js)
-[![Bundle size](https://deno.bundlejs.com/badge?q=@p2play-js/p2p-game@0.2.0)](https://bundlejs.com/?q=p2play-js)
+[![Bundle size](https://deno.bundlejs.com/badge?q=@p2play-js/p2p-game@0.2.1)](https://bundlejs.com/?q=p2play-js)
 
 ### Visual Example / Demo
 
@@ -62,6 +62,8 @@ const multiplayer = new P2PGameLibrary({
 
 await multiplayer.start();
 
+// Mutation events fire on the sender and on receiving peers (since v0.2.1),
+// so the same handler can drive every UI in the room.
 multiplayer.on("playerMove", (playerId, pos) => {});
 multiplayer.on("inventoryUpdate", (playerId, items) => {});
 multiplayer.on("objectTransfer", (from, to, item) => {});
@@ -351,14 +353,16 @@ See the "Local dev servers" section below for setup and usage instructions. In t
 
 ### Events
 
+Since `v0.2.1`, mutation events fire on the sender and on receiving peers (the same listener handles both).
+
 | Event            | Signature                                          | Description              |
 |------------------|----------------------------------------------------|--------------------------|
-| playerMove       | (playerId, position)                               | Movement applied         |
-| inventoryUpdate  | (playerId, items)                                  | Inventory updated        |
-| objectTransfer   | (from, to, item)                                   | Object transferred       |
-| sharedPayload    | (from, payload, channel?)                           | Generic payload received |
-| stateSync        | (state)                                            | Full snapshot received   |
-| stateDelta       | (delta)                                            | State delta received     |
+| playerMove       | (playerId, position)                               | Movement applied (sender + receivers) |
+| inventoryUpdate  | (playerId, items)                                  | Inventory updated (sender + receivers) |
+| objectTransfer   | (from, to, item)                                   | Object transferred (sender + receivers) |
+| sharedPayload    | (from, payload, channel?)                          | Generic payload (sender for `broadcastPayload`; receiver for `sendPayload`; local emit for self-targeted `sendPayload`) |
+| stateSync        | (state)                                            | Full snapshot applied (sender + receivers) |
+| stateDelta       | (delta)                                            | State delta applied (sender + receivers) |
 | peerJoin         | (playerId)                                         | Peer connected           |
 | peerLeave        | (playerId)                                         | Peer disconnected        |
 | hostChange       | (hostId)                                           | New host                 |
@@ -367,8 +371,7 @@ See the "Local dev servers" section below for setup and usage instructions. In t
 
 ### Lifecycle & presence
 
-- Presence: `announcePresence(playerId)` is recommended to emit an initial move so peers render the player immediately.
-- `peerJoin`/`peerLeave`: the UI can show/hide entities. Host‑side cleanup can be automated by enabling `cleanupOnPeerLeave: true` in `P2PGameLibrary` options: the host removes the leaving player's entries and broadcasts a delta accordingly.
+- Presence: `announcePresence(playerId)` broadcasts the joiner's initial position to other peers so they render the player immediately. Since `v0.2.1`, the host also registers every new peer in its own `state.players` (with position `{x:0,y:0}`) and emits a local `stateDelta` as soon as the `peerJoin` fires, so the host's UI is never stuck waiting for the joiner's first move. The host does not re-broadcast this entry: each peer remains the sender‑owned authority for its own `players.<id>` path, and the joiner's `announcePresence` (or any subsequent move) updates other peers directly.
 - `peerJoin`/`peerLeave`: the UI can show/hide entities. Host‑side cleanup can be automated by enabling `cleanupOnPeerLeave: true` in `P2PGameLibrary` options: the host removes the leaving player's entries and broadcasts a delta accordingly.
 - Capacity limit: set `maxPlayers` to cap the room size. When capacity is reached, the library will not initiate new connections and will ignore incoming offers; it emits `maxCapacityReached(maxPlayers)` so you can inform the user/UI.
 
@@ -380,9 +383,9 @@ See the "Local dev servers" section below for setup and usage instructions. In t
 
 ### Shared payloads
 
-- `broadcastPayload(playerId, payload, channel?)` sends an arbitrary object to all peers.
-- `sendPayload(playerId, to, payload, channel?)` sends an arbitrary object to a single peer.
-- `sharedPayload` is emitted on receipt: `(from, payload, channel?)`.
+- `broadcastPayload(playerId, payload, channel?)` sends an arbitrary object to all peers. The sender also receives a local `sharedPayload` event.
+- `sendPayload(playerId, to, payload, channel?)` sends an arbitrary object to a single peer. Self-targeted (`to === playerId`) short-circuits to a local `sharedPayload` emit (no DataChannel to self).
+- `sharedPayload` signature: `(from, payload, channel?)`.
 - No schema constraints; your app should type/validate the payload.
 - Do not send secrets; payload is visible to the recipients.
 

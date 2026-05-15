@@ -222,13 +222,16 @@
           log(`[capacity] max players reached (${max})`);
         });
 
+        // Mutation events fire on the sender and on receiving peers
+        // (since v0.2.1), so these handlers cover local actions too.
         multiplayer.on('inventoryUpdate', (pid, items) => {
           const mine = pid === id ? ' (me)' : '';
           log(`inventoryUpdate: ${pid}${mine} -> ${items.map(i=>i.id+"x"+i.quantity).join(', ')}`);
         });
 
         multiplayer.on('objectTransfer', (from, to, item) => {
-          log(`objectTransfer: ${from} -> ${to}: ${item.id} x${item.quantity}`);
+          const mine = from === id ? ' (me)' : '';
+          log(`objectTransfer: ${from}${mine} -> ${to}: ${item.id} x${item.quantity}`);
         });
 
         multiplayer.on('stateSync', (state) => {
@@ -240,10 +243,11 @@
         });
 
         multiplayer.on('sharedPayload', (from, payload, channel) => {
+          const mine = from === id ? ' (me)' : '';
           if (channel === 'chat') {
-            log(`[chat] ${from}: ${payload}`);
+            log(`[chat] ${from}${mine}: ${payload}`);
           } else {
-            log(`[payload] from=${from} channel=${channel ?? 'default'} data=${JSON.stringify(payload)}`);
+            log(`[payload] from=${from}${mine} channel=${channel ?? 'default'} data=${JSON.stringify(payload)}`);
           }
         });
 
@@ -259,23 +263,23 @@
         const ids = Object.keys(peers).filter(pid => pid !== id);
         if (!ids.length) { log('no peers'); return; }
         const to = ids[Math.floor(Math.random()*ids.length)];
+        // inventoryUpdate + objectTransfer handlers above log both calls.
         multiplayer.updateInventory(id, [{ id: 'potion', type: 'heal', quantity: 1 }]);
         multiplayer.transferItem(id, to, { id: 'potion', type: 'heal', quantity: 1 });
-        log(`transfer potion from ${id} to ${to}`);
       };
 
       document.getElementById('syncState').onclick = () => {
         if (!multiplayer) return;
+        // stateSync handler above logs the snapshot.
         multiplayer.broadcastFullState(id);
-        log('[manual] broadcast full state');
       };
 
       function sendChat() {
         const input = document.getElementById('chatInput');
         const text = input.value.trim();
         if (!text || !multiplayer) return;
+        // sharedPayload handler above logs the chat line.
         multiplayer.broadcastPayload(id, text, 'chat');
-        log(`[chat] ${id}: ${text}`);
         input.value = '';
       }
 
