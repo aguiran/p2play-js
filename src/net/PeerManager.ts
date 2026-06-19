@@ -26,6 +26,27 @@ export interface PeerInfo {
   joined?: boolean;
   outboxUnreliable?: Array<string | ArrayBuffer>;
   outboxReliable?: Array<string | ArrayBuffer>;
+  /** A renegotiation offer from us is in flight (voice, etc.) */
+  negotiating?: boolean;
+  /** A renegotiation was requested while another was in flight; replayed once back to stable */
+  needsRenegotiation?: boolean;
+}
+
+/**
+ * Hooks used by the voice layer (or any media layer) to participate in SDP
+ * renegotiation on already-connected peers. All hooks are optional so the
+ * voice module stays tree-shakeable.
+ */
+export interface MediaNegotiationHooks {
+  /**
+   * Called after a renegotiation offer has been applied (setRemoteDescription done)
+   * and before the answer is created, so transceivers/tracks can be configured.
+   */
+  onRemoteOfferApplied?: (peerId: PlayerId, rtc: RTCPeerConnection) => void | Promise<void>;
+  /** Called whenever a renegotiation completes (signalingState back to "stable"), on both offerer and answerer sides. */
+  onNegotiationSettled?: (peerId: PlayerId) => void;
+  /** Remote media track received. */
+  onTrack?: (peerId: PlayerId, ev: RTCTrackEvent) => void;
 }
 
 const UNRELIABLE_TYPES: ReadonlySet<string> = new Set(["move", "ping", "pong"]);
@@ -50,6 +71,7 @@ export class PeerManager {
   private readonly pendingOfferTimeoutMs: number;
   private readonly pingIntervalMs: number;
   private disposed = false;
+  private mediaHooks: MediaNegotiationHooks = {};
 
 constructor(bus: EventBus, signaling: SignalingAdapter, serializationStrategy: SerializationStrategy = "json", iceServers?: RTCIceServer[], debug?: DebugOptions, backpressure?: BackpressureOptions, maxPlayers?: number, timing?: PeerTimingOptions) {
     this.bus = bus;
@@ -67,6 +89,10 @@ constructor(bus: EventBus, signaling: SignalingAdapter, serializationStrategy: S
 
   getPeerIds(): PlayerId[] {
     return Array.from(this.peers.keys());
+  }
+
+  setMediaNegotiationHooks(hooks: MediaNegotiationHooks): void {
+    this.mediaHooks = hooks;
   }
 
   getPeer(id: PlayerId): PeerInfo | undefined {
@@ -134,13 +160,21 @@ constructor(bus: EventBus, signaling: SignalingAdapter, serializationStrategy: S
         if (info.rtc.signalingState !== "have-local-offer") return;
         await info.rtc.setRemoteDescription(desc);
         this.flushBufferedIce(from, info);
+        if (info.negotiating) this.settleNegotiation(info);
       } else if (desc.type === "offer") {
+        // Renegotiation path (voice, etc.): offer on an already-connected peer.
+        // Must run before the capacity check, which would otherwise reject
+        // renegotiation offers from existing peers when the room is full.
+        if (info?.rtc.connectionState === "connected") {
+          await this.handleRenegotiationOffer(info, desc, from);
+          return;
+        }
         // Capacity check: ignore offers if at capacity
         if (this.getInUseRemoteSlots() >= this.getMaxRemotePeers()) {
           if (this.maxPlayers) this.bus.emit("maxCapacityReached", this.maxPlayers);
           return;
         }
-        if (info?.rtc.connectionState === "connected" || info?.rtc.connectionState === "connecting") return;
+        if (info?.rtc.connectionState === "connecting") return;
         if (!info) {
           info = await this.createPeer(from, false);
           this.flushBufferedIce(from, info);
@@ -166,7 +200,7 @@ constructor(bus: EventBus, signaling: SignalingAdapter, serializationStrategy: S
           list.push(candidate);
           this.bufferedRemoteIce.set(from, list);
         } else {
-          await info.rtc.addIceCandidate(candidate);
+          await this.safeAddIceCandidate(info, candidate);
         }
       } else {
         // buffer until peer is known
@@ -192,6 +226,10 @@ constructor(bus: EventBus, signaling: SignalingAdapter, serializationStrategy: S
     const { rtc } = info;
     rtc.onicecandidate = (ev) => {
       if (ev.candidate) this.signaling.sendIceCandidate(ev.candidate.toJSON(), info.id);
+    };
+    rtc.ontrack = (ev) => {
+      if (this.disposed) return;
+      try { this.mediaHooks.onTrack?.(info.id, ev); } catch {}
     };
     rtc.onconnectionstatechange = () => {
       if (this.disposed) return;
@@ -298,11 +336,87 @@ constructor(bus: EventBus, signaling: SignalingAdapter, serializationStrategy: S
     await this.signaling.announce(offer, targetId);
   }
 
+  /**
+   * Explicit SDP renegotiation towards a connected peer (used by the voice layer).
+   * Serialized per peer: if a negotiation is already in flight, the request is
+   * queued and replayed once the signaling state returns to "stable".
+   */
+  async renegotiate(peerId: PlayerId): Promise<void> {
+    if (this.disposed) return;
+    const info = this.peers.get(peerId);
+    if (!info) throw new Error(`Cannot renegotiate: unknown peer "${peerId}"`);
+    if (info.negotiating || info.rtc.signalingState !== "stable") {
+      info.needsRenegotiation = true;
+      return;
+    }
+    info.negotiating = true;
+    try {
+      const offer = await info.rtc.createOffer();
+      await info.rtc.setLocalDescription(offer);
+      await this.signaling.announce(offer, peerId);
+    } catch (e) {
+      info.negotiating = false;
+      throw e;
+    }
+  }
+
+  /**
+   * Incoming renegotiation offer on an already-connected peer.
+   * Glare is resolved with the "perfect negotiation" pattern: politeness is
+   * derived from the same deterministic order as host election. The impolite
+   * peer ignores the colliding offer (its own offer wins); the polite peer
+   * rolls back its local offer, answers, then replays its own renegotiation.
+   */
+  private async handleRenegotiationOffer(info: PeerInfo, desc: RTCSessionDescriptionInit, from: PlayerId): Promise<void> {
+    const { rtc } = info;
+    if (rtc.signalingState === "have-local-offer") {
+      const polite = this.comparePlayerIds(this.localId, from) > 0;
+      if (!polite) return; // impolite: ignore, remote will answer our offer
+      await rtc.setLocalDescription({ type: "rollback" });
+      info.negotiating = false;
+      info.needsRenegotiation = true; // replay our intent after answering
+    } else if (rtc.signalingState !== "stable") {
+      return;
+    }
+    await rtc.setRemoteDescription(desc);
+    this.flushBufferedIce(from, info);
+    try { await this.mediaHooks.onRemoteOfferApplied?.(from, rtc); } catch {}
+    const answer = await rtc.createAnswer();
+    await rtc.setLocalDescription(answer);
+    await this.signaling.announce(answer, from);
+    this.settleNegotiation(info);
+  }
+
+  /** Negotiation back to "stable": notify the media layer and replay any queued renegotiation. */
+  private settleNegotiation(info: PeerInfo): void {
+    info.negotiating = false;
+    try { this.mediaHooks.onNegotiationSettled?.(info.id); } catch {}
+    if (info.needsRenegotiation && !this.disposed) {
+      info.needsRenegotiation = false;
+      this.renegotiate(info.id).catch(() => {});
+    }
+  }
+
   private flushBufferedIce(peerId: PlayerId, info: PeerInfo) {
     const list = this.bufferedRemoteIce.get(peerId);
     if (!list) return;
-    list.forEach((c) => info.rtc.addIceCandidate(c));
+    list.forEach((c) => this.safeAddIceCandidate(info, c));
     this.bufferedRemoteIce.delete(peerId);
+  }
+
+  /**
+   * Add a remote ICE candidate, swallowing the rejection that browsers throw for
+   * stale/invalid candidates (e.g. after rollback). A bad candidate must never
+   * surface as an unhandled promise rejection.
+   */
+  private async safeAddIceCandidate(info: PeerInfo, candidate: RTCIceCandidateInit): Promise<void> {
+    try {
+      await info.rtc.addIceCandidate(candidate);
+    } catch (error) {
+      if (this.debug.enabled) {
+        console.debug(`[p2play] dropped ICE candidate for peer ${info.id}:`, error);
+      }
+    }
   }
 
   /**

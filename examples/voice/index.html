@@ -1,0 +1,230 @@
+<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>P2P Game - Selective Voice</title>
+    <style>
+      body { font-family: system-ui, sans-serif; margin: 0; display: grid; grid-template-columns: 320px 1fr; height: 100vh; }
+      aside { padding: 12px; background: #181818; color: #eee; overflow: auto; }
+      main { padding: 16px; background: #0b1020; color: #eee; overflow: auto; }
+      .row { margin-bottom: 8px; }
+      label { display: block; margin-bottom: 4px; font-weight: 600; }
+      input, select, button { width: 100%; padding: 6px 8px; }
+      #log { white-space: pre-wrap; font-size: 12px; background: #111; padding: 8px; height: 200px; overflow: auto; }
+      a, a:hover { color: #eee; }
+      .pill { display: inline-block; padding: 2px 6px; background: #333; border-radius: 6px; margin-left: 6px; }
+      .peer-card { background: #16203a; border: 1px solid #2a3a5f; border-radius: 8px; padding: 12px; width: 180px; box-sizing: border-box; }
+      .peer-card h3 { margin: 0 0 10px; font-size: 15px; }
+      .peer-actions { display: flex; flex-direction: column; gap: 6px; }
+      .peer-actions button { width: 100%; box-sizing: border-box; font-size: 13px; padding: 8px 12px; min-height: 34px; cursor: pointer; }
+      .voice-state { font-size: 12px; margin-top: 8px; color: #9fb3d9; }
+      .voice-state .on { color: #6fe09b; }
+      .voice-state .failed { color: #f08080; }
+      .toggle-row { display: flex; align-items: center; gap: 8px; }
+      .toggle-row input[type=checkbox] { width: auto; }
+      .hint { font-size: 12px; color: #999; line-height: 1.5; }
+      h2 { font-size: 17px; }
+      #peers { display: flex; flex-wrap: wrap; gap: 10px; align-items: flex-start; }
+      button.active { outline: 2px solid #6fe09b; }
+    </style>
+  </head>
+  <body>
+    <aside>
+      <div class="row">
+        <label>Room</label>
+        <input id="room" value="voice-room" />
+      </div>
+      <div class="row">
+        <label>Player ID</label>
+        <input id="pid" value="P1" />
+      </div>
+      <div class="row">
+        <label>Signaling Server</label>
+        <input id="signaling" value="ws://localhost:8787" placeholder="ws://localhost:8787" />
+        <small class="hint">For testing with public server, use: wss://wss.getlost.ovh</small>
+      </div>
+      <div class="row">
+        <button id="start">Start</button>
+      </div>
+      <div class="row toggle-row">
+        <input type="checkbox" id="muteToggle" disabled />
+        <label for="muteToggle" style="margin:0;font-weight:400;">Mute microphone (global)</label>
+      </div>
+      <div class="row">
+        <button id="stopAll" disabled>Stop all voice links</button>
+      </div>
+      <div class="row">
+        <div>Host: <span id="host" class="pill">-</span></div>
+      </div>
+      <div id="log"></div>
+      <div class="row hint">
+        <strong>Try the "listen" scenario (SA2):</strong> open 3 tabs as P1, P2, P3.
+        On P1 click <em>Talk</em> towards P2 (bidirectional call, P2 auto-answers).
+        On P3 click <em>Listen</em> towards P1 and P2: P3 hears both without
+        being heard — P1 and P2 never click anything.
+      </div>
+      <div class="row hint">
+        Note: browsers require a user gesture before playing audio, and the
+        microphone prompt appears on the first <em>Talk</em> (or when a remote
+        peer requests your audio).
+      </div>
+      <div class="row">Find <a href="https://www.getlost.ovh" target="_blank">full documentation here</a> and <a href="https://github.com/aguiran/p2play-js" target="_blank">Github Repo here</a>.</div>
+    </aside>
+    <main>
+      <h2>Peers</h2>
+      <div id="peers"></div>
+    </main>
+
+    <script type="module">
+      import { P2PGameLibrary, WebSocketSignaling } from "/dist/index.js";
+
+      const logEl = document.getElementById('log');
+      const log = (m) => { logEl.textContent += m + "\n"; logEl.scrollTop = logEl.scrollHeight; };
+
+      const peersEl = document.getElementById('peers');
+      let multiplayer;
+      let id;
+      const connected = new Set();
+      const voiceStates = new Map();   // peerId -> "connecting" | "connected" | ...
+      const voiceModes = new Map();    // peerId -> "talk" | "listen"
+      const audioEls = new Map();      // peerId -> HTMLAudioElement
+
+      function render() {
+        peersEl.innerHTML = '';
+        if (connected.size === 0) {
+          peersEl.innerHTML = '<p class="hint">No peers connected yet.</p>';
+          return;
+        }
+        for (const pid of connected) {
+          const state = voiceStates.get(pid);
+          const mode = voiceModes.get(pid);
+          const card = document.createElement('div');
+          card.className = 'peer-card';
+          card.innerHTML = `
+            <h3>${pid}</h3>
+            <div class="peer-actions">
+              <button data-action="talk" data-peer="${pid}" class="${mode === 'talk' ? 'active' : ''}">Talk</button>
+              <button data-action="listen" data-peer="${pid}" class="${mode === 'listen' ? 'active' : ''}">Listen</button>
+              <button data-action="stop" data-peer="${pid}">Stop</button>
+            </div>
+            <div class="voice-state">Voice: <span class="${state === 'connected' ? 'on' : state === 'failed' ? 'failed' : ''}">${state ? `${state}${mode ? ` (${mode})` : ''}` : 'off'}</span></div>
+          `;
+          peersEl.appendChild(card);
+        }
+      }
+
+      peersEl.addEventListener('click', async (e) => {
+        const btn = e.target.closest('button[data-action]');
+        if (!btn || !multiplayer) return;
+        const peerId = btn.dataset.peer;
+        const action = btn.dataset.action;
+        try {
+          if (action === 'stop') {
+            multiplayer.voice.stop(peerId);
+            voiceModes.delete(peerId);
+            log(`[voice] stop -> ${peerId}`);
+          } else {
+            log(`[voice] start ${action} -> ${peerId} ...`);
+            voiceModes.set(peerId, action);
+            await multiplayer.voice.start(peerId, { mode: action });
+            log(`[voice] ${action} established with ${peerId}`);
+          }
+        } catch (err) {
+          voiceModes.delete(peerId);
+          log(`[voice] error: ${err.message}`);
+        }
+        render();
+      });
+
+      function attachAudio(peerId, stream) {
+        let el = audioEls.get(peerId);
+        if (!el) {
+          el = document.createElement('audio');
+          el.autoplay = true;
+          audioEls.set(peerId, el);
+          document.body.appendChild(el);
+        }
+        el.srcObject = stream;
+        // Autoplay policy: play() may need the user gesture that triggered start()
+        el.play().catch(() => log(`[voice] click anywhere to allow audio playback for ${peerId}`));
+      }
+
+      function detachAudio(peerId) {
+        const el = audioEls.get(peerId);
+        if (el) {
+          el.srcObject = null;
+          el.remove();
+          audioEls.delete(peerId);
+        }
+      }
+
+      document.getElementById('start').addEventListener('click', async () => {
+        if (multiplayer) return;
+        id = document.getElementById('pid').value.trim();
+        const room = document.getElementById('room').value.trim();
+        const url = document.getElementById('signaling').value.trim();
+
+        const signaling = new WebSocketSignaling(id, room, url);
+        // Detached canvas: PingOverlay always creates a fixed overlay unless a canvas is supplied.
+        const pingCanvas = document.createElement('canvas');
+        multiplayer = new P2PGameLibrary({
+          maxPlayers: 8,
+          signaling,
+          pingOverlay: { enabled: false, canvas: pingCanvas },
+        });
+
+        multiplayer.on('peerJoin', (pid) => { connected.add(pid); log(`[mesh] peer joined: ${pid}`); render(); });
+        multiplayer.on('peerLeave', (pid) => {
+          connected.delete(pid);
+          voiceStates.delete(pid);
+          voiceModes.delete(pid);
+          detachAudio(pid);
+          log(`[mesh] peer left: ${pid}`);
+          render();
+        });
+        multiplayer.on('hostChange', (h) => { document.getElementById('host').textContent = h; });
+
+        multiplayer.voice.on('remoteStream', (pid, stream) => {
+          log(`[voice] remote stream from ${pid}`);
+          attachAudio(pid, stream);
+          render();
+        });
+        multiplayer.voice.on('remoteStreamRemoved', (pid) => {
+          log(`[voice] remote stream removed: ${pid}`);
+          detachAudio(pid);
+          render();
+        });
+        multiplayer.voice.on('state', (pid, state) => {
+          voiceStates.set(pid, state);
+          if (state === 'disconnected' || state === 'failed') voiceModes.delete(pid);
+          log(`[voice] ${pid}: ${state}`);
+          render();
+        });
+        multiplayer.voice.on('error', (pid, err) => log(`[voice] error (${pid}): ${err.message}`));
+
+        await multiplayer.start();
+        multiplayer.announcePresence(id);
+        log(`[mesh] started as ${id} in room ${room}`);
+
+        const muteToggle = document.getElementById('muteToggle');
+        muteToggle.disabled = false;
+        muteToggle.addEventListener('change', () => {
+          multiplayer.voice.setMuted(muteToggle.checked);
+          log(`[voice] mic ${muteToggle.checked ? 'muted' : 'unmuted'}`);
+        });
+        const stopAllBtn = document.getElementById('stopAll');
+        stopAllBtn.disabled = false;
+        stopAllBtn.addEventListener('click', () => {
+          multiplayer.voice.stopAll();
+          voiceModes.clear();
+          log('[voice] all links stopped');
+          render();
+        });
+        render();
+      });
+
+      render();
+    </script>
+  </body>
+</html>

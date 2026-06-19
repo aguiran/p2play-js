@@ -7,7 +7,7 @@ Modular TypeScript library to build browser-based P2P (WebRTC) multiplayer games
 [![npm version](https://img.shields.io/npm/v/@p2play-js/p2p-game.svg)](https://www.npmjs.com/package/@p2play-js/p2p-game)
 [![license: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](./LICENSE)
 [![codecov](https://codecov.io/gh/aguiran/p2play-js/graph/badge.svg)](https://codecov.io/gh/aguiran/p2play-js)
-[![Bundle size](https://deno.bundlejs.com/badge?q=@p2play-js/p2p-game@0.2.1)](https://bundlejs.com/?q=p2play-js)
+[![Bundle size](https://deno.bundlejs.com/badge?q=@p2play-js/p2p-game@0.3.0)](https://bundlejs.com/?q=p2play-js)
 
 ### Visual Example / Demo
 
@@ -16,6 +16,8 @@ Modular TypeScript library to build browser-based P2P (WebRTC) multiplayer games
 **[Basic demo](https://www.getlost.ovh/example/basic.html?utm_source=github)**
 
 **[Complete demo](https://www.getlost.ovh/example/complete.html?utm_source=github)**
+
+**[Voice demo](https://www.getlost.ovh/example/voice.html?utm_source=github)**
 
 ### Installation
 
@@ -109,6 +111,7 @@ multiplayer.setStateAndBroadcast("playerA", [
 
 - WebRTC DataChannels (P2P) synchronization + WebSocket signaling (rooms)
 - **Dual DataChannels per peer**: automatic routing between a fast unreliable channel (move/ping) and a reliable channel (inventory, transfers, state sync, payloads)
+- **Selective peer voice** (since `v0.3.0`): bidirectional (`talk`) or one-way (`listen`) audio per peer pair, negotiated on the existing peer connections — no extra mesh, no SFU, no signaling protocol change
 - Global shared state: players, inventories, objects, tick. `getState()` returns a deep copy so mutations do not affect internal state; use `broadcastMove()`, `setStateAndBroadcast()`, etc. to mutate and sync.
 - Sync strategies: the library handles both full snapshots (`state_full`) and delta updates (`state_delta`). Your app decides when to send each via `broadcastFullState()` or `broadcastDelta()`.
 - Consistency strategy: `timestamp`
@@ -140,6 +143,49 @@ multiplayer.sendPayload("playerA", "playerB", data, "channel", { unreliable: tru
 ```
 
 `broadcastMove` always uses unreliable (by design). `broadcastFullState` and `broadcastDelta` always use reliable (critical data).
+
+### Selective peer voice (talk / listen)
+
+Since `v0.3.0`, the library supports selective peer-to-peer audio on the **same** `RTCPeerConnection`s used for DataChannels, via standard SDP renegotiation. No second connection per pair, no media server, and **zero signaling changes**: renegotiation reuses the existing `desc`/`ice` envelopes, so custom `SignalingAdapter` implementations and the reference WS server keep working as-is.
+
+| Mode     | Local (caller)  | Remote   | Use case |
+|----------|-----------------|----------|----------|
+| `talk`   | sendrecv        | sendrecv | Bidirectional call |
+| `listen` | recvonly        | sendonly | One-way listening (spectator, referee...) |
+
+```ts
+// Bidirectional call with playerB — only the caller invokes start();
+// playerB's library auto-answers the renegotiation (no app-side call needed).
+await multiplayer.voice.start("playerB", { mode: "talk" });
+
+// One-way: hear playerB without sending audio
+await multiplayer.voice.start("playerB", { mode: "listen" });
+
+// Optional custom outgoing stream (talk only); defaults to getUserMedia({ audio: true })
+await multiplayer.voice.start("playerB", { mode: "talk", localStream: myStream });
+
+multiplayer.voice.setMuted(true);   // cut all outgoing audio, no renegotiation
+multiplayer.voice.stop("playerB");  // tear down one link (remote is notified via SDP)
+multiplayer.voice.stopAll();
+
+// Events
+multiplayer.voice.on("remoteStream", (peerId, stream) => { audioEl.srcObject = stream; });
+multiplayer.voice.on("remoteStreamRemoved", (peerId) => { /* detach audio */ });
+multiplayer.voice.on("state", (peerId, state) => { /* "connecting" | "connected" | "disconnected" | "failed" */ });
+multiplayer.voice.on("error", (peerId, error) => { /* e.g. mic permission denied */ });
+```
+
+Behavior notes:
+
+- **Initiator**: the caller of `voice.start()` initiates the renegotiation (unlike the mesh rule used for the initial connection). Calling `start()` again on an active pair **replaces** the previous mode.
+- **Promise resolution**: `start()` resolves once the SDP renegotiation completes (the connection's ICE transport is reused, already established). The `remoteStream` event fires separately when the remote track arrives.
+- **Microphone consent**: the library calls `getUserMedia({ audio: true })` on the first `talk` — and on the remote side when an incoming link requests its audio. The browser permission prompt is the consent gate. On denial, the negotiation still completes without audio and an `error` event is emitted; DataChannels are never affected.
+- **Mic lifecycle**: a single `MediaStreamTrack` is shared across all peer connections. The library stops the mic track (browser indicator turns off) once no link sends audio anymore. App-provided `localStream`s are never stopped by the library.
+- **Stop symmetry**: `voice.stop(peerId)` deactivates the audio transceiver and renegotiates; the remote receives `remoteStreamRemoved` + `state: "disconnected"` automatically.
+- **Cleanup**: `peerLeave` and `stop()`/`dispose` tear down voice state without leaks.
+- **No DataChannel regression**: renegotiation never touches the DataChannels; game traffic keeps flowing during and after voice setup.
+- **TURN**: voice reuses the `iceServers` from `P2PGameLibrary` options — no separate ICE configuration. For strict networks, a TURN server is recommended (audio bandwidth is higher than game data).
+- **Autoplay policy**: browsers require a user gesture before playing audio; attach the remote stream to an `<audio autoplay>` element from a click handler (see `examples/voice/`).
 
 ### Network and signaling
 
@@ -351,6 +397,19 @@ Comprehensive P2P multiplayer game demonstrating the library's core capabilities
 
 See the "Local dev servers" section below for setup and usage instructions. In the demo UI, configure your room/player/signaling and click Start.
 
+#### Voice Demo: `examples/voice/index.html`
+
+Interactive demo for the selective peer voice API (`talk` / `listen`):
+
+- Per-peer **Talk** / **Listen** / **Stop** buttons with live voice state
+- Global **Mute** toggle and **Stop all** button
+- Remote audio playback via auto-attached `<audio>` elements
+- Event log (`remoteStream`, `state`, `error`, ...)
+
+**Try the SA2 "listen" scenario** with 3 tabs (P1, P2, P3): P1 clicks *Talk* towards P2 (P2 auto-answers, bidirectional). P3 clicks *Listen* towards P1 and P2: P3 hears both without being heard — P1 and P2 never click anything.
+
+Serve it like the complete demo (see "Local dev servers"), then open `http://localhost:8080/examples/voice/`. A hosted version is also available: **[Voice demo](https://www.getlost.ovh/example/voice.html?utm_source=github)**.
+
 ### Events
 
 Since `v0.2.1`, mutation events fire on the sender and on receiving peers (the same listener handles both).
@@ -368,6 +427,8 @@ Since `v0.2.1`, mutation events fire on the sender and on receiving peers (the s
 | hostChange       | (hostId)                                           | New host                 |
 | ping             | (playerId, ms)                                     | RTT to peer              |
 | maxCapacityReached | (maxPlayers)                                     | Capacity reached; new connections refused |
+
+Voice events live on a dedicated emitter (`multiplayer.voice.on(...)`): `remoteStream`, `remoteStreamRemoved`, `state`, `error` — see "Selective peer voice" above.
 
 ### Lifecycle & presence
 
@@ -409,6 +470,14 @@ Notes:
 - The schema under `objects.*` is application-defined.
 
 ### Useful scripts
+
+**Node.js:** use **24** (LTS, pinned in `.nvmrc`), **22** (LTS), or **20**. Node 23 is not supported by Vitest. From the repo root:
+
+```bash
+nvm install 24 && nvm use    # reads .nvmrc (fallback: nvm install 22 && nvm use)
+# or: fnm install 24 && fnm use   # reads .node-version
+npm install
+```
 
 - `npm run serve:ws` starts the signaling WS server (port 8787).
 - `npm run serve:http` serves `/examples` and `/dist` (port 8080).

@@ -7,6 +7,7 @@ export * from "./events/EventBus";
 export * from "./overlay/PingOverlay";
 export * from "./game/GameLib";
 export * from "./game/MovementSystem";
+export * from "./voice/VoiceManager";
 export * from "./net/serialization";
 // new generic payload API types are exported via ./types
 

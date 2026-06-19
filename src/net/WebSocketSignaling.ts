@@ -23,6 +23,7 @@ export class WebSocketSignaling implements SignalingAdapter {
   private readonly serverUrl: string;
   private readonly reconnect: boolean;
   private closedIntentionally = false;
+  private disconnectNotified = false;
   private reconnectTimeoutId: ReturnType<typeof setTimeout> | undefined;
   private reconnectAttempt = 0;
   private onDisconnectCb: (() => void) | undefined;
@@ -70,7 +71,12 @@ export class WebSocketSignaling implements SignalingAdapter {
 
   private handleClose(): void {
     if (this.closedIntentionally || !this.reconnect) return;
-    this.onDisconnectCb?.();
+    // A socket failure typically fires both "error" and "close"; only notify the
+    // consumer once per disconnect. The flag is cleared on a successful reconnect.
+    if (!this.disconnectNotified) {
+      this.disconnectNotified = true;
+      this.onDisconnectCb?.();
+    }
     this.scheduleReconnect();
   }
 
@@ -99,6 +105,7 @@ export class WebSocketSignaling implements SignalingAdapter {
           return;
         }
         this.reconnectAttempt = 0;
+        this.disconnectNotified = false;
         this._wired = false;
         this.ensureWired();
         this.register().then(() => {
