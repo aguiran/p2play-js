@@ -23,7 +23,16 @@ export class EventBus {
     const set = this.listeners.get(name) as Set<Listener<N>> | undefined;
     if (!set) return;
     const a = args as Parameters<Listener<N>>;
-    set.forEach((fn) => (fn as (...a: Parameters<Listener<N>>) => void)(...a));
+    // Snapshot so a listener that (un)subscribes during dispatch can't skip/duplicate others.
+    // Each listener is isolated: one throwing listener must not break internal
+    // message routing or prevent the remaining listeners from running.
+    for (const fn of [...set]) {
+      try {
+        (fn as (...a: Parameters<Listener<N>>) => void)(...a);
+      } catch (error) {
+        console.error(`[p2play] listener for "${String(name)}" threw:`, error);
+      }
+    }
   }
 
   /** Remove all listeners. Use when disposing the bus owner. */

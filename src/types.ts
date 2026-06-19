@@ -149,7 +149,7 @@ export type NetMessage =
   | SharedPayloadMessage;
 
 export type EventHandlerMap = {
-  playerMove: (playerId: PlayerId, position: { x: number; y: number }) => void;
+  playerMove: (playerId: PlayerId, position: { x: number; y: number; z?: number }) => void;
   inventoryUpdate: (playerId: PlayerId, inventory: InventoryItem[]) => void;
   objectTransfer: (fromPlayer: PlayerId, toPlayer: PlayerId, item: InventoryItem) => void;
   stateSync: (state: GlobalGameState) => void;
@@ -164,6 +164,27 @@ export type EventHandlerMap = {
 };
 
 export type EventName = keyof EventHandlerMap;
+
+// Voice: selective peer audio over existing RTCPeerConnections
+export type VoiceMode = "talk" | "listen";
+
+export type VoiceState = "connecting" | "connected" | "disconnected" | "failed";
+
+export interface VoiceOptions {
+  /** "talk" = bidirectional (sendrecv), "listen" = receive-only (local recvonly, remote sendonly) */
+  mode: VoiceMode;
+  /** talk only — custom outgoing stream; ignored for listen. Defaults to getUserMedia({ audio: true }). */
+  localStream?: MediaStream;
+}
+
+export type VoiceEventHandlerMap = {
+  remoteStream: (peerId: PlayerId, stream: MediaStream) => void;
+  remoteStreamRemoved: (peerId: PlayerId) => void;
+  state: (peerId: PlayerId, state: VoiceState) => void;
+  error: (peerId: PlayerId, error: Error) => void;
+};
+
+export type VoiceEventName = keyof VoiceEventHandlerMap;
 
 // Movement: configuration options for smoothing and extrapolation
 export interface MovementOptions {

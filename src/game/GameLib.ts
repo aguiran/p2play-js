@@ -2,6 +2,7 @@ import { EventBus } from "../events/EventBus";
 import { PeerManager, SignalingAdapter } from "../net/PeerManager";
 import { PingOverlay } from "../overlay/PingOverlay";
 import { StateManager } from "../sync/StateManager";
+import { VoiceManager } from "../voice/VoiceManager";
 import { MovementSystem } from "./MovementSystem";
 import {
   DeltaStateMessage,
@@ -26,6 +27,8 @@ export class P2PGameLibrary {
   private readonly peers: PeerManager;
   private readonly overlay: PingOverlay;
   private readonly movement: MovementSystem;
+  /** Selective peer voice (`talk` / `listen`) over the existing peer connections. */
+  readonly voice: VoiceManager;
   private readonly localId: PlayerId;
   private readonly signaling: SignalingAdapter;
   private readonly options: Required<Pick<GameLibOptions, "conflictResolution" | "maxPlayers">> & GameLibOptions;
@@ -59,6 +62,7 @@ export class P2PGameLibrary {
     );
     this.localId = options.signaling.localId;
 
+    this.voice = new VoiceManager(this.peers, this.bus);
     this.overlay = new PingOverlay(this.bus, options.pingOverlay);
     this.movement = new MovementSystem(this.bus, () => this.state.getState(), this.options.movement ?? {}, () => this.localId);
 
@@ -125,6 +129,7 @@ export class P2PGameLibrary {
     if (this.disposed) return;
     this.disposed = true;
     for (const u of this.unsubs) u();
+    this.voice.dispose();
     this.peers.dispose();
     this.signaling?.close?.();
     this.overlay.dispose();
@@ -169,14 +174,14 @@ export class P2PGameLibrary {
   }
 
   // Movement API
-  broadcastMove(selfId: PlayerId, position: { x: number; y: number }, velocity?: { x: number; y: number }) {
+  broadcastMove(selfId: PlayerId, position: { x: number; y: number; z?: number }, velocity?: { x: number; y: number; z?: number }) {
     if (this.disposed) throw new Error("P2PGameLibrary has been disposed");
     const msg: MoveMessage = { t: "move", from: selfId, ts: performance.now(), seq: this.nextSeq(selfId), position, velocity };
     this.applyLocalAndBroadcast(msg);
   }
 
   // Presence API: ensure local player exists (or update position) and broadcast a move to announce presence
-  announcePresence(selfId: PlayerId, position: { x: number; y: number } = { x: 0, y: 0 }) {
+  announcePresence(selfId: PlayerId, position: { x: number; y: number; z?: number } = { x: 0, y: 0 }) {
     if (this.disposed) throw new Error("P2PGameLibrary has been disposed");
     const msg: MoveMessage = { t: "move", from: selfId, ts: performance.now(), seq: this.nextSeq(selfId), position };
     this.applyLocalAndBroadcast(msg);

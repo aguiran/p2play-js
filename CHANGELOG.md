@@ -4,6 +4,33 @@ All notable changes to this project are documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.3.0] - 2026-06-19
+
+### Added
+- `P2PGameLibrary.voice` API: selective peer audio (`talk` bidirectional, `listen` one-way) via SDP renegotiation on the existing `RTCPeerConnection`s. No signaling protocol changes: renegotiation reuses the existing `desc`/`ice` envelopes, so custom `SignalingAdapter` implementations and the reference WS server work unchanged.
+- Voice methods: `voice.start(peerId, { mode, localStream? })`, `voice.stop(peerId)`, `voice.stopAll()`, `voice.setMuted(muted)`, `voice.isMuted()`, `voice.getActiveLinks()`.
+- Voice events (dedicated emitter): `remoteStream`, `remoteStreamRemoved`, `state` (`connecting`/`connected`/`disconnected`/`failed`), `error`.
+- Remote auto-answer: only the caller of `voice.start()` initiates; the remote library handles the incoming renegotiation (attaching its microphone when the link requests it — the browser permission prompt is the consent gate; on denial the negotiation completes without audio and `error` is emitted).
+- Shared microphone lifecycle: one `MediaStreamTrack` reused across all peer connections; the library-owned mic track is stopped once no link sends audio anymore. App-provided `localStream`s are never stopped by the library.
+- `PeerManager.renegotiate(peerId)` and `setMediaNegotiationHooks(...)`: explicit, serialized SDP renegotiation on connected peers with glare handling (perfect negotiation; politeness derived from the same deterministic id order as host election).
+- New types: `VoiceMode`, `VoiceState`, `VoiceOptions`, `VoiceEventHandlerMap`.
+- Example: `examples/voice/index.html` (per-peer Talk/Listen/Stop, global mute, remote audio playback, 3-tab listen scenario).
+
+### Changed
+- `PeerManager` accepts renegotiation offers from already-connected peers (previously ignored) without tearing down DataChannels; audio transceivers are reused across `start`/`stop` cycles (`direction: "inactive"`, no m-line growth). Renegotiation offers from existing peers bypass the room capacity check.
+- `broadcastMove`, `announcePresence` and the `playerMove` event now expose the optional `z` axis in their TypeScript signatures, matching `MoveMessage` / `PlayerState`. No runtime change: the third axis already flowed through at runtime but was not typed on the public surface.
+
+### Fixed
+- `EventBus` isolates listener exceptions: a throwing application listener no longer breaks internal message routing nor prevents the remaining listeners from running (the error is reported via `console.error`).
+- Remote ICE candidates that fail to apply (e.g. stale candidates after a renegotiation rollback) are now swallowed instead of surfacing as unhandled promise rejections.
+- `WebSocketSignaling` no longer fires the `onDisconnect` callback twice when a socket failure emits both `error` and `close`; the guard resets on a successful reconnect.
+
+### Security
+- Hardened internal path-based state updates (`state_delta`, `setStateAndBroadcast`) against prototype pollution: path segments `__proto__`, `prototype` and `constructor` are rejected, so a malicious peer can no longer reach `Object.prototype` through a crafted delta path.
+
+### Migration
+- No breaking changes. `SignalingAdapter` and the WS server protocol are unchanged; existing apps and custom adapters keep working as-is. Voice is opt-in via `multiplayer.voice`.
+
 ## [0.2.1] - 2026-05-15
 
 ### Fixed

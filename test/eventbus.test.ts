@@ -1,4 +1,4 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
 import { EventBus } from '../src/events/EventBus';
 
 describe('EventBus', () => {
@@ -21,6 +21,18 @@ describe('EventBus', () => {
     bus.emit('peerJoin', 'P1' as any);
     expect(a).toBe(1);
     expect(b).toBe(1);
+  });
+
+  it('isolates a throwing listener so other listeners still run', () => {
+    const bus = new EventBus();
+    const errSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+    let after = 0;
+    bus.on('peerJoin', () => { throw new Error('boom'); });
+    bus.on('peerJoin', () => { after++; });
+    expect(() => bus.emit('peerJoin', 'P1' as any)).not.toThrow();
+    expect(after).toBe(1);
+    expect(errSpy).toHaveBeenCalled();
+    errSpy.mockRestore();
   });
 });
 

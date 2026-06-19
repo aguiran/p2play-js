@@ -1,6 +1,6 @@
 {
   "name": "@p2play-js/p2p-game",
-  "version": "0.2.1",
+  "version": "0.3.0",
   "description": "Modular TypeScript library for browser-based P2P (WebRTC) multiplayer games with state sync and consistency strategies",
   "type": "module",
   "main": "dist/index.js",
@@ -39,6 +39,9 @@
   ],
   "author": "Aguiran",
   "license": "MIT",
+  "engines": {
+    "node": "^20.0.0 || ^22.0.0 || >=24.0.0"
+  },
   "sideEffects": false,
   "devDependencies": {
     "@vitest/coverage-v8": "^4.0.18",

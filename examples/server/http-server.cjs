@@ -1,5 +1,4 @@
 const http = require('http');
-const url = require('url');
 const path = require('path');
 const fs = require('fs');
 
@@ -24,8 +23,8 @@ const mime = {
 
 const server = http.createServer((req, res) => {
   try {
-    const parsedUrl = url.parse(req.url);
-    const decodedPathname = decodeURIComponent(parsedUrl.pathname || '/');
+    const { pathname: rawPath = '/' } = new URL(req.url || '/', 'http://localhost');
+    const decodedPathname = decodeURIComponent(rawPath);
     let pathname = path.join(baseDir, decodedPathname);
 
     // Prevent path traversal
